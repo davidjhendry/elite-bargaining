@@ -1,0 +1,2573 @@
+---
+title: "Elite Bargaining Analysis"
+author: "David Hendry and Sunhee Park"
+date: "November 11, 2021"
+output:
+  html_document:
+    #df_print: paged
+    toc: true
+    toc_float: true
+  pdf_document: default
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#setwd()
+```
+
+# Preliminaries
+
+```{r}
+library(tidyverse)
+library(readxl)
+#library(lmtest)
+#library(multiwayvcov)
+#library(stargazer)
+
+## read in data and turn all variable names to lower case
+eb_data <-
+  read_excel('Data/PSBargainingDataset_DFF.xlsx',
+             sheet = 'CombinedPS_DyadLevel') %>% rename_all(tolower)
+names(eb_data) <- gsub(' ', '', names(eb_data))
+names(eb_data) <- gsub('\\(', '', names(eb_data))
+names(eb_data) <- gsub('\\)', '', names(eb_data))
+names(eb_data) <- gsub('\\?', '', names(eb_data))
+
+## drop some variables that will not be used
+drop_cols <- c('note_sideb1', 'note_sideb2', 'note_sideb3', 'note_sideb4',
+               'note_sideb5', 'sideb6', 'ucdp_nego_detail', 'negotiations',
+               'psharing', 'reader', 'r1bar', 'r1psharing', 'r2bar',
+               'r2psharing', 'r3bar', 'r3psharing', 'powersharing1stcheck',
+               'powersharing2ndcheck', 'powersharing3rdcheck',
+               'intercodermatchpsharing', 'intercodermatchbargaining', 
+               'reconciled', 'matching', 'conflictid', 'p1death', 'p2death',
+               'p3death', 'p4death', 'startdate', 'startprec', 'startdate2',
+               'startprec2', 'epend', 'ependdate', 'ependprec', 'gwnoa',
+               'gwnoa2nd', 'gwnob', 'gwnob2nd', 'region', 'sideb5')
+eb_data <- eb_data %>% select(-one_of(drop_cols))
+
+eb_data <- eb_data %>% mutate(
+  dyad1_relativetroops = na_if(dyad1_relativetroops, '.') %>% as.numeric(),
+  reldeaths30end_adjusted = replace_na(reldeaths30end, .5)
+)
+
+eb_data <- eb_data %>% mutate(
+  offerstrengthmatch = dyad1_myshare - dyad1_relativetroops,
+  other_reldeaths30end_adjusted = 1 - reldeaths30end_adjusted,
+  mulrebel = case_when(noofparticipants == 2 ~ 0, noofparticipants > 2 ~ 1),
+  auto = if_else(polityiv < -5, 1, 0),
+  offerstrengthmatch30end = dyad1_myoffer - other_reldeaths30end_adjusted
+)
+
+eb_data <- eb_data %>% mutate(
+  offerstrengthmatch30end_abs = abs(offerstrengthmatch30end),
+  id = 1:nrow(eb_data),
+  reject1 = case_when(dyad1_outcomea == 0 ~ 0, dyad1_outcomea == 1 ~ 1),
+  reject2 = case_when(dyad1_outcomeb == 0 ~ 0, dyad1_outcomeb == 1 ~ 1),
+  accept1 = case_when(dyad1_outcomea == 0 ~ 1, dyad1_outcomea == 1 ~ 0),
+  accept2 = case_when(dyad1_outcomeb == 0 ~ 1, dyad1_outcomeb == 1 ~ 0),
+  democratic = if_else(polityiv > 0, 1, 0), auto = if_else(polityiv < -5, 1, 0),
+  dyadicsame = case_when(dyadicmixedleader == 0 ~ 1,
+                         dyadicmixedleader == 1 ~ 0),
+  mul_rebel = case_when(noofparticipants == 2 ~ 0, noofparticipants == 3 ~ 1,
+                        noofparticipants == 4 ~ 1),
+  dyad1_myoffer = dyad1_myoffer / 100, dyad1_myshare = dyad1_myshare / 100,
+  dyad1_otheroffer = dyad1_otheroffer / 100,
+  dyad1_relativetroops = dyad1_relativetroops / 100
+)
+
+eb_data <- eb_data %>% mutate(
+  myoffer_band = case_when((dyad1_myoffer >= 0 & dyad1_myoffer <= 0.1) ~ 1,
+                           (dyad1_myoffer > 0.1 & dyad1_myoffer <= 0.2) ~ 2,
+                           (dyad1_myoffer > 0.2 & dyad1_myoffer <= 0.3) ~ 3,
+                           (dyad1_myoffer > 0.3 & dyad1_myoffer <= 0.4) ~ 4,
+                           (dyad1_myoffer > 0.4 & dyad1_myoffer <= 0.5) ~ 5,
+                           (dyad1_myoffer > 0.5 & dyad1_myoffer <= 0.6) ~ 6,
+                           (dyad1_myoffer > 0.6 & dyad1_myoffer <= 0.7) ~ 7,
+                           (dyad1_myoffer > 0.7 & dyad1_myoffer <= 0.8) ~ 8,
+                           (dyad1_myoffer > 0.8 & dyad1_myoffer <= 0.9) ~ 9,
+                           (dyad1_myoffer > 0.9 & dyad1_myoffer <= 1) ~ 10),
+  myshare_band = case_when((dyad1_myshare >= 0 & dyad1_myshare <= 0.1) ~ 1,
+                           (dyad1_myshare > 0.1 & dyad1_myshare <= 0.2) ~ 2,
+                           (dyad1_myshare > 0.2 & dyad1_myshare <= 0.3) ~ 3,
+                           (dyad1_myshare > 0.3 & dyad1_myshare <= 0.4) ~ 4,
+                           (dyad1_myshare > 0.4 & dyad1_myshare <= 0.5) ~ 5,
+                           (dyad1_myshare > 0.5 & dyad1_myshare <= 0.6) ~ 6,
+                           (dyad1_myshare > 0.6 & dyad1_myshare <= 0.7) ~ 7,
+                           (dyad1_myshare > 0.7 & dyad1_myshare <= 0.8) ~ 8,
+                           (dyad1_myshare > 0.8 & dyad1_myshare <= 0.9) ~ 9,
+                           (dyad1_myshare > 0.9 & dyad1_myshare <= 1) ~ 10),
+  otheroffer_band =
+    case_when((dyad1_otheroffer >= 0 & dyad1_otheroffer <= 0.1) ~ 1,
+              (dyad1_otheroffer > 0.1 & dyad1_otheroffer <= 0.2) ~ 2,
+              (dyad1_otheroffer > 0.2 & dyad1_otheroffer <= 0.3) ~ 3,
+              (dyad1_otheroffer > 0.3 & dyad1_otheroffer <= 0.4) ~ 4,
+              (dyad1_otheroffer > 0.4 & dyad1_otheroffer <= 0.5) ~ 5,
+              (dyad1_otheroffer > 0.5 & dyad1_otheroffer <= 0.6) ~ 6,
+              (dyad1_otheroffer > 0.6 & dyad1_otheroffer <= 0.7) ~ 7,
+              (dyad1_otheroffer > 0.7 & dyad1_otheroffer <= 0.8) ~ 8,
+              (dyad1_otheroffer > 0.8 & dyad1_otheroffer <= 0.9) ~ 9,
+              (dyad1_otheroffer > 0.9 & dyad1_otheroffer <= 1) ~ 10),
+  lowoffer49 = if_else(dyad1_myoffer < 0.5, 1, 0),
+  lowotheroffer49 = if_else(dyad1_otheroffer < 0.5, 1, 0),
+  lowoffer50 = if_else(dyad1_myoffer <= 0.5, 1, 0),
+  lowotheroffer50 = if_else(dyad1_otheroffer <= 0.5, 1, 0),
+  unfairoffer = dyad1_relativetroops - dyad1_otheroffer,
+  unsatisfyingofferA = dyad1_myshare - dyad1_otheroffer,
+  unsatisfyingofferB = dyad1_myoffer - dyad1_otheroffer,
+  
+)
+
+eb_data <- eb_data %>% mutate(
+  unfairofferA = case_when(unfairoffer < 0 ~ 1, unfairoffer >= 0 ~ 0),
+  unfairofferB = case_when(unfairoffer <= 0 ~ 1, unfairoffer > 0 ~ 0),
+  unsatisfyingofferAa = case_when(unsatisfyingofferA < 0 ~ 1,
+                                  unsatisfyingofferA >= 0 ~ 0),
+  unsatisfyingofferAb = case_when(unsatisfyingofferA <= 0 ~ 1,
+                                  unsatisfyingofferA > 0 ~ 0),
+  unsatisfyingofferBa = case_when(unsatisfyingofferB < 0 ~ 1,
+                                  unsatisfyingofferB >= 0 ~ 0),
+  unsatisfyingofferBb = case_when(unsatisfyingofferB <= 0 ~ 1,
+                                  unsatisfyingofferB > 0 ~ 1)
+)
+
+eb_data <- eb_data %>%
+  mutate(dyad2_leader = NA_real_) %>%
+  mutate(dyad2_leader = case_when(dyadicnonleader == 1 ~ 0)) %>%
+  mutate(dyad2_leader =
+         case_when((dyad1_leader == 1 & dyadicmixedleader == 1) ~ 0)) %>%
+  mutate(dyad2_leader =
+         case_when((dyad1_leader == 0 & dyadicmixedleader == 1) ~ 1)) %>%
+  mutate(dyad2_leader = case_when(dyadicleader == 1 ~ 1))
+
+
+```
+
+destring, replace
+
+gen dyad2_leader=.
+replace dyad2_leader=0 if dyadicnonleader==1
+replace dyad2_leader=0 if dyad1_leader==1 & dyadicmixedleader==1
+replace dyad2_leader=1 if dyad1_leader==0 & dyadicmixedleader==1
+replace dyad2_leader=1 if dyadicleader==1
+
+
+gen dyad2_experience=.
+replace dyad2_experience=0 if dyadicnonexperience==1
+replace dyad2_experience=0 if dyad1_experience==1 & dyadicmixedexperience==1
+replace dyad2_experience=1 if dyad1_experience==0 & dyadicmixedexperience==1
+replace dyad2_experience=1 if dyadicexperience==1
+
+gen mulrebel=.
+replace mulrebel=0 if noofparticipants==2
+replace mulrebel=1 if noofparticipants>2
+
+
+gen reldeaths30start_adjusted=reldeaths30start
+replace reldeaths30start_adjusted=0.5 if reldeaths30start==.
+
+gen reldeaths60start_adjusted=reldeaths60start
+replace reldeaths60start_adjusted=0.5 if reldeaths60start==.
+
+gen reldeaths90start_adjusted=reldeaths90start
+replace reldeaths90start_adjusted=0.5 if reldeaths90start==.
+
+gen reldeaths120start_adjusted=reldeaths120start
+replace reldeaths120start_adjusted=0.5 if reldeaths120start==.
+
+gen reldeaths150start_adjusted=reldeaths150start
+replace reldeaths150start_adjusted=0.5 if reldeaths150start==.
+
+gen reldeaths180start_adjusted=reldeaths180start
+replace reldeaths180start_adjusted=0.5 if reldeaths180start==.
+
+gen reldeaths1yearstart_adjusted=reldeaths1yearstart
+replace reldeaths1yearstart_adjusted=0.5 if reldeaths1yearstart==.
+
+
+
+
+gen reldeaths30end_adjusted=reldeaths30end
+replace reldeaths30end_adjusted=0.5 if reldeaths30end==.
+
+gen reldeaths60end_adjusted=reldeaths60end
+replace reldeaths60end_adjusted=0.5 if reldeaths60end==.
+
+gen reldeaths90end_adjusted=reldeaths90end
+replace reldeaths90end_adjusted=0.5 if reldeaths90end==.
+
+gen reldeaths120end_adjusted=reldeaths120end
+replace reldeaths120end_adjusted=0.5 if reldeaths120end==.
+
+gen reldeaths150end_adjusted=reldeaths150end
+replace reldeaths150end_adjusted=0.5 if reldeaths150end==.
+
+gen reldeaths180end_adjusted=reldeaths180end
+replace reldeaths180end_adjusted=0.5 if reldeaths180end==.
+
+gen reldeaths1yearend_adjusted=reldeaths1yearend
+replace reldeaths1yearend_adjusted=0.5 if reldeaths1yearend==.
+
+
+gen other_reldeaths30start_adjusted=1-reldeaths30start_adjusted
+gen other_reldeaths60start_adjusted=1-reldeaths60start_adjusted
+gen other_reldeaths90start_adjusted=1-reldeaths90start_adjusted
+gen other_reldeaths120start_adjusted=1-reldeaths120start_adjusted
+gen other_reldeaths150start_adjusted=1-reldeaths150start_adjusted
+gen other_reldeaths180start_adjusted=1-reldeaths180start_adjusted
+gen other_reldeaths365start_adjusted=1-reldeaths1yearstart_adjusted
+
+gen other_reldeaths30end_adjusted=1-reldeaths30end_adjusted
+gen other_reldeaths60end_adjusted=1-reldeaths60end_adjusted
+gen other_reldeaths90end_adjusted=1-reldeaths90end_adjusted
+gen other_reldeaths120end_adjusted=1-reldeaths120end_adjusted
+gen other_reldeaths150end_adjusted=1-reldeaths150end_adjusted
+gen other_reldeaths180end_adjusted=1-reldeaths180end_adjusted
+gen other_reldeaths1yearend_adjusted=1-reldeaths1yearend_adjusted
+
+
+gen biggeroffer_30start=.
+replace biggeroffer_30start=1 if dyad1_myoffer-other_reldeaths30start_adjusted>-0.1
+replace biggeroffer_30start=0 if dyad1_myoffer-other_reldeaths30start_adjusted<=-0.1
+
+gen biggeroffer_60start=.
+replace biggeroffer_60start=1 if dyad1_myoffer-other_reldeaths60start_adjusted>-0.1
+replace biggeroffer_60start=0 if dyad1_myoffer-other_reldeaths60start_adjusted<=-0.1
+
+gen biggeroffer_90start=.
+replace biggeroffer_90start=1 if dyad1_myoffer-other_reldeaths90start_adjusted>-0.1
+replace biggeroffer_90start=0 if dyad1_myoffer-other_reldeaths90start_adjusted<=-0.1
+
+gen biggeroffer_120start=.
+replace biggeroffer_120start=1 if dyad1_myoffer-other_reldeaths120start_adjusted>-0.1
+replace biggeroffer_120start=0 if dyad1_myoffer-other_reldeaths120start_adjusted<=-0.1
+
+gen biggeroffer_150start=.
+replace biggeroffer_150start=1 if dyad1_myoffer-other_reldeaths150start_adjusted>-0.1
+replace biggeroffer_150start=0 if dyad1_myoffer-other_reldeaths150start_adjusted<=-0.1
+
+gen biggeroffer_180start=.
+replace biggeroffer_180start=1 if dyad1_myoffer-other_reldeaths180start_adjusted>-0.1
+replace biggeroffer_180start=0 if dyad1_myoffer-other_reldeaths180start_adjusted<=-0.1
+
+gen biggeroffer_1yearstart=.
+replace biggeroffer_1yearstart=1 if dyad1_myoffer-other_reldeaths365start_adjusted>-0.1
+replace biggeroffer_1yearstart=0 if dyad1_myoffer-other_reldeaths365start_adjusted<=-0.1
+
+gen biggeroffer_30end=.
+replace biggeroffer_30end=1 if dyad1_myoffer-other_reldeaths30end_adjusted>-0.1
+replace biggeroffer_30end=0 if dyad1_myoffer-other_reldeaths30end_adjusted<=-0.1
+
+gen biggeroffer_60end=.
+replace biggeroffer_60end=1 if dyad1_myoffer-other_reldeaths60end_adjusted>-0.1
+replace biggeroffer_60end=0 if dyad1_myoffer-other_reldeaths60end_adjusted<=-0.1
+
+gen biggeroffer_90end=.
+replace biggeroffer_90end=1 if dyad1_myoffer-other_reldeaths90end_adjusted>-0.1
+replace biggeroffer_90end=0 if dyad1_myoffer-other_reldeaths90end_adjusted<=-0.1
+
+gen biggeroffer_120end=.
+replace biggeroffer_120end=1 if dyad1_myoffer-other_reldeaths120end_adjusted>-0.1
+replace biggeroffer_120end=0 if dyad1_myoffer-other_reldeaths120end_adjusted<=-0.1
+
+gen biggeroffer_150end=.
+replace biggeroffer_150end=1 if dyad1_myoffer-other_reldeaths150end_adjusted>-0.1
+replace biggeroffer_150end=0 if dyad1_myoffer-other_reldeaths150end_adjusted<=-0.1
+
+gen biggeroffer_180end=.
+replace biggeroffer_180end=1 if dyad1_myoffer-other_reldeaths180end_adjusted>-0.1
+replace biggeroffer_180end=0 if dyad1_myoffer-other_reldeaths180end_adjusted<=-0.1
+
+gen biggeroffer_1yearend=.
+replace biggeroffer_1yearend=1 if dyad1_myoffer-other_reldeaths1yearend_adjusted>-0.1
+replace biggeroffer_1yearend=0 if dyad1_myoffer-other_reldeaths1yearend_adjusted<=-0.1
+
+
+
+gen offerstrengthmatch30start =dyad1_myoffer-other_reldeaths30start_adjusted
+gen offerstrengthmatch30start_abs= offerstrengthmatch30start 
+replace offerstrengthmatch30start_abs=-1*offerstrengthmatch30start if offerstrengthmatch30start <0
+
+gen offerstrengthmatch60start =dyad1_myoffer-other_reldeaths60start_adjusted
+gen offerstrengthmatch60start_abs= offerstrengthmatch60start 
+replace offerstrengthmatch60start_abs=-1*offerstrengthmatch60start if offerstrengthmatch60start <0
+
+gen offerstrengthmatch90start =dyad1_myoffer-other_reldeaths90start_adjusted
+gen offerstrengthmatch90start_abs= offerstrengthmatch90start 
+replace offerstrengthmatch90start_abs=-1*offerstrengthmatch90start if offerstrengthmatch90start <0
+
+gen offerstrengthmatch120start =dyad1_myoffer-other_reldeaths120start_adjusted
+gen offerstrengthmatch120start_abs= offerstrengthmatch120start 
+replace offerstrengthmatch120start_abs=-1*offerstrengthmatch120start if offerstrengthmatch120start <0
+
+gen offerstrengthmatch150start =dyad1_myoffer-other_reldeaths150start_adjusted
+gen offerstrengthmatch150start_abs= offerstrengthmatch150start 
+replace offerstrengthmatch150start_abs=-1*offerstrengthmatch150start if offerstrengthmatch150start <0
+
+gen offerstrengthmatch180start =dyad1_myoffer-other_reldeaths180start_adjusted
+gen offerstrengthmatch180start_abs= offerstrengthmatch180start 
+replace offerstrengthmatch180start_abs=-1*offerstrengthmatch180start if offerstrengthmatch180start <0
+
+gen offerstrengthmatch365start =dyad1_myoffer-other_reldeaths365start_adjusted
+gen offerstrengthmatch365start_abs= offerstrengthmatch365start 
+replace offerstrengthmatch365start_abs=-1*offerstrengthmatch365start if offerstrengthmatch365start <0
+
+
+gen offerstrengthmatch30end =dyad1_myoffer-other_reldeaths30end_adjusted
+gen offerstrengthmatch30end_abs= offerstrengthmatch30end 
+replace offerstrengthmatch30end_abs=-1*offerstrengthmatch30end if offerstrengthmatch30end <0
+
+gen offerstrengthmatch60end =dyad1_myoffer-other_reldeaths60end_adjusted
+gen offerstrengthmatch60end_abs= offerstrengthmatch60end 
+replace offerstrengthmatch60end_abs=-1*offerstrengthmatch60end if offerstrengthmatch60end <0
+
+gen offerstrengthmatch90end =dyad1_myoffer-other_reldeaths90end_adjusted
+gen offerstrengthmatch90end_abs= offerstrengthmatch90end 
+replace offerstrengthmatch90end_abs=-1*offerstrengthmatch90end if offerstrengthmatch90end <0
+
+gen offerstrengthmatch120end =dyad1_myoffer-other_reldeaths120end_adjusted
+gen offerstrengthmatch120end_abs= offerstrengthmatch120end 
+replace offerstrengthmatch120end_abs=-1*offerstrengthmatch120end if offerstrengthmatch120end <0
+
+gen offerstrengthmatch150end =dyad1_myoffer-other_reldeaths150end_adjusted
+gen offerstrengthmatch150end_abs= offerstrengthmatch150end 
+replace offerstrengthmatch150end_abs=-1*offerstrengthmatch150end if offerstrengthmatch150end <0
+
+gen offerstrengthmatch180end =dyad1_myoffer-other_reldeaths180end_adjusted
+gen offerstrengthmatch180end_abs= offerstrengthmatch180end 
+replace offerstrengthmatch180end_abs=-1*offerstrengthmatch180end if offerstrengthmatch180end <0
+
+gen offerstrengthmatch1yearend =dyad1_myoffer-other_reldeaths1yearend_adjusted
+gen offerstrengthmatch1yearend_abs= offerstrengthmatch1yearend 
+replace offerstrengthmatch1yearend_abs=-1*offerstrengthmatch1yearend if offerstrengthmatch1yearend <0
+
+
+
+
+
+
+
+
+
+
+
+
+
+mod01 <- lm(offerstrengthmatch ~ dyad1_leader * rebel + reldeaths30end_adjusted, data = eb_data)
+vcov_mod01 <- cluster.vcov(mod01, eb_data$psbargaining)
+mod01_clust <- coeftest(mod01, vcov_mod01)
+mod01_clust
+
+mod02 <- lm(offerstrengthmatch30end_abs ~ dyad1_leader * rebel, data = eb_data)
+vcov_mod02 <- cluster.vcov(mod02, eb_data$psbargaining)
+mod02_clust <- coeftest(mod02, vcov_mod02)
+mod02_clust
+
+mod03 <- lm(offerstrengthmatch30end ~ dyad1_leader * rebel, data = eb_data)
+vcov_mod03 <- cluster.vcov(mod03, eb_data$psbargaining)
+mod03_clust <- coeftest(mod03, vcov_mod03)
+mod03_clust
+
+mod04 <- lm(offerstrengthmatch30end ~ dyad1_leader * rebel + relativetroops, data = eb_data)
+vcov_mod04 <- cluster.vcov(mod04, eb_data$psbargaining)
+mod04_clust <- coeftest(mod04, vcov_mod04)
+mod04_clust
+
+
+
+
+
+reg offerstrengthmatch30end_abs dyad1_leader rebel relativetroops mulrebel incompatibility mulps guarantee mediation_derouen auto setend, cluster(psbargaining)
+
+#mulrebel
+#incompatibility
+
+            + mulps + guarantee + mediation_derouen + auto
+
+tab03_c2_alt <- lm(dyad1_myoffer ~ dyad1_leader*sideb_leader +
+                   dyadicexperience + dyad1_relativedeath + pps + mulps +
+                   mediation_derouen + noofparticipants + location_foreign,
+                   data = eb_data_tab03_complete)
+vcov_tab03_c2_alt <-
+  cluster.vcov(tab03_c2_alt, eb_data_tab03_complete$psbargaining)
+tab03_c2_clust_alt <- coeftest(tab03_c2_alt, vcov_tab03_c2_alt)
+
+
+
+reg offerstrengthmatch1 dyad1_leader rebel reldeaths30end_adjusted mulrebel incompatibility mulps guarantee mediation_derouen auto setend, cluster(psbargaining)
+
+
+gen offerstrengthmatch1=dyad1_myoffer-dyad1_relativetroops
+
+eb_data %>% select(dyad1_myoffer, dyad1_myshare)
+
+
+
+summary(dyad1_myoffer)
+summary(dyad1_relativetroops)
+
+summary(offerstrengthmatch1)
+summary(dyad1_leader)
+summary(rebel)
+summary(reldeaths30end_adjusted)
+summary(mulrebel)
+summary(incompatibility)
+summary(mulps)
+summary(guarantee)
+summary(mediation_derouen)
+summary(auto)
+summary(setend)
+summary(psbargaining)
+
+
+```
+
+
+WORKS BEST!!!!!!! LEADER OFFER>POWER, LEADER REJECTION OF NO LOW OFFER > DELEGATE REJECTION
+(also works with location_foreign & unfairoffer=dyad1_relativetroops-dyad1_otheroffer) reg offerstrengthmatch1 dyad1_leader rebel reldeaths30end_adjusted mulrebel incompatibility mulps guarantee mediation_derouen auto setend, cluster(psbargaining)
+(also works with location_foreign & unfairoffer=dyad1_relativetroops-dyad1_otheroffer) logit biggeroffer dyad1_leader rebel reldeaths30end_adjusted mulrebel incompatibility mulps guarantee mediation_derouen auto setend, cluster(psbargaining)
+(WITH unsatisfyingoffer=dyad1_otheroffer-dyad1_myoffer) logit accept1 unsatisfyingofferB rebel reldeaths30end_adjusted mulrebel incompatibility mulps guarantee mediation_derouen auto setend if dyad1_leader==1, cluster(psbargaining)
+(WITH unsatisfyingoffer=dyad1_otheroffer-dyad1_myoffer) logit accept1 unsatisfyingofferB rebel reldeaths30end_adjusted mulrebel incompatibility mulps guarantee mediation_derouen auto setend if dyad1_leader==0, cluster(psbargaining)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# constructing new variables
+eb_data$id <- 1:nrow(eb_data)
+
+eb_data$dyad1_myoffer <- eb_data$dyad1_myoffer / 100
+eb_data$dyad1_myshare <- eb_data$dyad1_myshare / 100
+eb_data$dyad1_otheroffer <- eb_data$dyad1_otheroffer / 100
+eb_data$dyad1_relativedeath <- eb_data$dyad1_relativedeath / 100
+
+eb_data$dyad1_relativetroops <-
+  as.numeric(na_if(as.character(eb_data$dyad1_relativetroops), ".")) / 100
+
+eb_data$unfairoffer <- eb_data$dyad1_otheroffer - eb_data$dyad1_relativetroops
+eb_data$unsatisfyingoffer <- eb_data$dyad1_otheroffer - eb_data$dyad1_myoffer
+
+eb_data <- eb_data %>% mutate(
+  reject = recode(dyad1_outcome, `1` = 1, `0` = 0, .default = NA_real_),
+  accept = recode(dyad1_outcome, `1` = 0, `0` = 1, .default = NA_real_),
+  democratic = case_when(polityiv > 0 ~ 1, polityiv <= 0 ~ 0),
+  auto = case_when(polityiv < -5 ~ 1, polityiv >= -5 ~ 0),
+  dyadicsame = recode(dyadicmixedleader, `1` = 0, `0` = 1, .default = NA_real_),
+  myoffer_band = case_when((dyad1_myoffer >= 0 & dyad1_myoffer <= 0.1) ~ 1,
+                           (dyad1_myoffer > 0.1 & dyad1_myoffer <= 0.2) ~ 2,
+                           (dyad1_myoffer > 0.2 & dyad1_myoffer <= 0.3) ~ 3,
+                           (dyad1_myoffer > 0.3 & dyad1_myoffer <= 0.4) ~ 4,
+                           (dyad1_myoffer > 0.4 & dyad1_myoffer <= 0.5) ~ 5,
+                           (dyad1_myoffer > 0.5 & dyad1_myoffer <= 0.6) ~ 6,
+                           (dyad1_myoffer > 0.6 & dyad1_myoffer <= 0.7) ~ 7,
+                           (dyad1_myoffer > 0.7 & dyad1_myoffer <= 0.8) ~ 8,
+                           (dyad1_myoffer > 0.8 & dyad1_myoffer <= 0.9) ~ 9,
+                           (dyad1_myoffer > 0.9 & dyad1_myoffer <= 1) ~ 10),
+  myshare_band = case_when((dyad1_myshare >= 0 & dyad1_myshare <= 0.1) ~ 1,
+                           (dyad1_myshare > 0.1 & dyad1_myshare <= 0.2) ~ 2,
+                           (dyad1_myshare > 0.2 & dyad1_myshare <= 0.3) ~ 3,
+                           (dyad1_myshare > 0.3 & dyad1_myshare <= 0.4) ~ 4,
+                           (dyad1_myshare > 0.4 & dyad1_myshare <= 0.5) ~ 5,
+                           (dyad1_myshare > 0.5 & dyad1_myshare <= 0.6) ~ 6,
+                           (dyad1_myshare > 0.6 & dyad1_myshare <= 0.7) ~ 7,
+                           (dyad1_myshare > 0.7 & dyad1_myshare <= 0.8) ~ 8,
+                           (dyad1_myshare > 0.8 & dyad1_myshare <= 0.9) ~ 9,
+                           (dyad1_myshare > 0.9 & dyad1_myshare <= 1) ~ 10),
+  otheroffer_band =
+    case_when((dyad1_otheroffer >= 0 & dyad1_otheroffer <= 0.1) ~ 1,
+              (dyad1_otheroffer >= 0.1 & dyad1_otheroffer <= 0.2) ~ 2,
+              (dyad1_otheroffer >= 0.2 & dyad1_otheroffer <= 0.3) ~ 3,
+              (dyad1_otheroffer >= 0.3 & dyad1_otheroffer <= 0.4) ~ 4,
+              (dyad1_otheroffer >= 0.4 & dyad1_otheroffer <= 0.5) ~ 5,
+              (dyad1_otheroffer >= 0.5 & dyad1_otheroffer <= 0.6) ~ 6,
+              (dyad1_otheroffer >= 0.6 & dyad1_otheroffer <= 0.7) ~ 7,
+              (dyad1_otheroffer >= 0.7 & dyad1_otheroffer <= 0.8) ~ 8,
+              (dyad1_otheroffer >= 0.8 & dyad1_otheroffer <= 0.9) ~ 9,
+              (dyad1_otheroffer >= 0.9 & dyad1_otheroffer <= 1) ~ 10),
+  lowoffer49 = case_when(dyad1_myoffer >= 0.5 ~ 0, dyad1_myoffer < 0.5 ~ 1),
+  lowoffer50 = case_when(dyad1_myoffer > 0.5 ~ 0, dyad1_myoffer <= 0.5 ~ 1),
+  unfairofferA = case_when(unfairoffer >= 0 ~ 0, unfairoffer < 0 ~ 1),
+  unfairofferB = case_when(unfairoffer > 0 ~ 0, unfairoffer <= 0 ~ 1),
+  unsatisfyingofferA =
+    case_when(unsatisfyingoffer >= 0 ~ 0, unsatisfyingoffer < 0 ~ 1),
+  unsatisfyingofferB =
+    case_when(unsatisfyingoffer > 0 ~ 0, unsatisfyingoffer <= 0 ~ 1)
+)
+
+eb_data$mediation_derouen <- as.numeric(as.character(eb_data$mediation_derouen))
+eb_data$noofparticipants <- as.numeric(as.character(eb_data$noofparticipants))
+eb_data$location_foreign <- as.numeric(as.character(eb_data$location_foreign))
+eb_data$groupname <- as.character(eb_data$groupname)
+
+## generate group death counts
+# create date character variables from individual day, month, year variables
+eb_data <- eb_data %>%
+  mutate(
+    startd_alt = unlist(lapply(strsplit(unlist(lapply(strsplit(
+      as.character(startd), ' '), '[', 1)), '~'), '[', 1)),
+    startm_alt =
+      unlist(lapply(strsplit(as.character(startm), ','), '[', 1))) %>%
+  mutate(
+    startd_alt = if_else(as.numeric(as.character(startd_alt)) < 10,
+      paste('0', as.character(startd_alt), sep = ''),
+      as.character(startd_alt)),
+    startm_alt =
+         if_else(as.numeric(as.character(startm_alt)) < 10,
+                 paste('0', as.character(startm_alt), sep = ''),
+                 as.character(startm_alt))) %>%
+  mutate(
+    neg_startdate_early = as.Date(paste(as.character(starty), '-',
+      as.character(startm_alt), '-', as.character(startd_alt), sep = '')))
+
+eb_data <- eb_data %>%
+  mutate(
+    endm_alt = unlist(lapply(strsplit(gsub('[(),]', ' ', as.character(endm)),
+      ' '), tail, 1)),
+    endd_alt = unlist(lapply(strsplit(gsub('[(),]', ' ', as.character(endd)),
+      ' '), tail, 1))) %>%
+  mutate(
+    endd_alt = if_else(as.numeric(as.character(endd_alt)) < 10,
+      paste('0', as.character(endd_alt), sep = ''), as.character(endd_alt)),
+    endm_alt = if_else(as.numeric(as.character(endm_alt)) < 10,
+      paste('0', as.character(endm_alt), sep = ''), as.character(endm_alt))) %>%
+  mutate(
+    neg_enddate_late = as.Date(paste(as.character(endy), '-',
+      as.character(endm_alt), '-', as.character(endd_alt), sep = '')))
+
+eb_data <- eb_data %>% mutate(
+  end30prior = neg_enddate_late - 30, end60prior = neg_enddate_late - 60,
+  end90prior = neg_enddate_late - 90, end120prior = neg_enddate_late - 120,
+  end150prior = neg_enddate_late - 150, end180prior = neg_enddate_late - 180,
+  end1yearprior = neg_enddate_late - 365,
+  start30prior = neg_startdate_early - 30,
+  start60prior = neg_startdate_early - 60,
+  start90prior = neg_startdate_early - 90,
+  start120prior = neg_startdate_early - 120,
+  start150prior = neg_startdate_early - 150,
+  start180prior = neg_startdate_early - 180,
+  start1yearprior = neg_startdate_early - 365)
+
+# cleaning up group names so that they match ged
+eb_data[c(38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60), ]$groupname <-
+  "Serbian Republic of Bosnia-Herzegovina"
+eb_data[c(62, 64, 66, 68, 70, 72, 74, 76, 78, 80, 82, 84), ]$groupname <-
+  "Croatian Republic of Bosnia-Herzegovina"
+eb_data[150, ]$groupname <- "Cobras"
+eb_data[c(174, 176, 178, 180, 182, 184), ]$groupname <- "Renamo"
+eb_data[c(188, 190, 192, 194, 196, 198, 200, 202), ]$groupname <- "FPR"
+eb_data[206, ]$groupname <- "RUF"
+eb_data[205, ]$groupname <- "Government of Sierra Leone"
+
+reb_row_nums <- eb_data %>%
+  filter(substr(groupname, 1, 10) != 'Government') %>% select(id) %>%
+  as_vector()
+
+within_psbargaining_dyadid <- NULL
+for ( i in unique(eb_data$psbargaining) ) {
+  temp_gov_data <-
+    eb_data[eb_data$psbargaining == i &
+            substr(eb_data$groupname, 1, 10) == 'Government', ]
+  num_dyads <- nrow(temp_gov_data)
+  num_dyads_seq <- 1:num_dyads
+  within_psbargaining_dyadid <-
+    c(within_psbargaining_dyadid, rep(num_dyads_seq, 2))
+}
+eb_data$within_psbargaining_dyadid <- within_psbargaining_dyadid
+
+end30prior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus30 <- eb_data[i, ]$end30prior
+  reb_name <- eb_data[i, ]$groupname
+  end30prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus30 & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus30 <- eb_data[i, ]$end30prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end30prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus30 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus30 <- eb_data[i, ]$end30prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end30prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus30 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  end30prior_id_list[[gov_id_temp]] <- end30prior_id_list[[reb_id_temp]]
+}
+
+end30prior_sidea_deaths <- rep(NA, 216)
+end30prior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- end30prior_id_list[[i]]
+  end30prior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  end30prior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$end30prior_sidea_deaths <- end30prior_sidea_deaths
+eb_data$end30prior_sideb_deaths <- end30prior_sideb_deaths
+
+end60prior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus60 <- eb_data[i, ]$end60prior
+  reb_name <- eb_data[i, ]$groupname
+  end60prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus60 & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus60 <- eb_data[i, ]$end60prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end60prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus60 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus60 <- eb_data[i, ]$end60prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end60prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus60 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  end60prior_id_list[[gov_id_temp]] <- end60prior_id_list[[reb_id_temp]]
+}
+
+end60prior_sidea_deaths <- rep(NA, 216)
+end60prior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- end60prior_id_list[[i]]
+  end60prior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  end60prior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$end60prior_sidea_deaths <- end60prior_sidea_deaths
+eb_data$end60prior_sideb_deaths <- end60prior_sideb_deaths
+
+end90prior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus90 <- eb_data[i, ]$end90prior
+  reb_name <- eb_data[i, ]$groupname
+  end90prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus90 & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus90 <- eb_data[i, ]$end90prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end90prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus90 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus90 <- eb_data[i, ]$end90prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end90prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus90 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  end90prior_id_list[[gov_id_temp]] <- end90prior_id_list[[reb_id_temp]]
+}
+
+end90prior_sidea_deaths <- rep(NA, 216)
+end90prior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- end90prior_id_list[[i]]
+  end90prior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  end90prior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$end90prior_sidea_deaths <- end90prior_sidea_deaths
+eb_data$end90prior_sideb_deaths <- end90prior_sideb_deaths
+
+end120prior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus120 <- eb_data[i, ]$end120prior
+  reb_name <- eb_data[i, ]$groupname
+  end120prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus120 & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus120 <- eb_data[i, ]$end120prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end120prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus120 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus120 <- eb_data[i, ]$end120prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end120prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus120 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  end120prior_id_list[[gov_id_temp]] <- end120prior_id_list[[reb_id_temp]]
+}
+
+end120prior_sidea_deaths <- rep(NA, 216)
+end120prior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- end120prior_id_list[[i]]
+  end120prior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  end120prior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$end120prior_sidea_deaths <- end120prior_sidea_deaths
+eb_data$end120prior_sideb_deaths <- end120prior_sideb_deaths
+
+end150prior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus150 <- eb_data[i, ]$end150prior
+  reb_name <- eb_data[i, ]$groupname
+  end150prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus150 & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus150 <- eb_data[i, ]$end150prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end150prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus150 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus150 <- eb_data[i, ]$end150prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end150prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus150 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  end150prior_id_list[[gov_id_temp]] <- end150prior_id_list[[reb_id_temp]]
+}
+
+end150prior_sidea_deaths <- rep(NA, 216)
+end150prior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- end150prior_id_list[[i]]
+  end150prior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  end150prior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$end150prior_sidea_deaths <- end150prior_sidea_deaths
+eb_data$end150prior_sideb_deaths <- end150prior_sideb_deaths
+
+end180prior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus180 <- eb_data[i, ]$end180prior
+  reb_name <- eb_data[i, ]$groupname
+  end180prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus180 & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus180 <- eb_data[i, ]$end180prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end180prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus180 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus180 <- eb_data[i, ]$end180prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end180prior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus180 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  end180prior_id_list[[gov_id_temp]] <- end180prior_id_list[[reb_id_temp]]
+}
+
+end180prior_sidea_deaths <- rep(NA, 216)
+end180prior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- end180prior_id_list[[i]]
+  end180prior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  end180prior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$end180prior_sidea_deaths <- end180prior_sidea_deaths
+eb_data$end180prior_sideb_deaths <- end180prior_sideb_deaths
+
+end1yearprior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus1year <- eb_data[i, ]$end1yearprior
+  reb_name <- eb_data[i, ]$groupname
+  end1yearprior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus1year & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus1year <- eb_data[i, ]$end1yearprior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end1yearprior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus1year &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_enddate_late
+  neg_date_minus1year <- eb_data[i, ]$end1yearprior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  end1yearprior_id_list[[i]] <-
+    ged[as.Date(ged$date_end) <= neg_date &
+        as.Date(ged$date_end) > neg_date_minus1year &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  end1yearprior_id_list[[gov_id_temp]] <- end1yearprior_id_list[[reb_id_temp]]
+}
+
+end1yearprior_sidea_deaths <- rep(NA, 216)
+end1yearprior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- end1yearprior_id_list[[i]]
+  end1yearprior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  end1yearprior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$end1yearprior_sidea_deaths <- end1yearprior_sidea_deaths
+eb_data$end1yearprior_sideb_deaths <- end1yearprior_sideb_deaths
+
+start30prior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus30 <- eb_data[i, ]$start30prior
+  reb_name <- eb_data[i, ]$groupname
+  start30prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus30 & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus30 <- eb_data[i, ]$start30prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start30prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus30 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus30 <- eb_data[i, ]$start30prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start30prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus30 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  start30prior_id_list[[gov_id_temp]] <- start30prior_id_list[[reb_id_temp]]
+}
+
+start30prior_sidea_deaths <- rep(NA, 216)
+start30prior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- start30prior_id_list[[i]]
+  start30prior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  start30prior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$start30prior_sidea_deaths <- start30prior_sidea_deaths
+eb_data$start30prior_sideb_deaths <- start30prior_sideb_deaths
+
+start60prior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus60 <- eb_data[i, ]$start60prior
+  reb_name <- eb_data[i, ]$groupname
+  start60prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus60 & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus60 <- eb_data[i, ]$start60prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start60prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus60 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus60 <- eb_data[i, ]$start60prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start60prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus60 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  start60prior_id_list[[gov_id_temp]] <- start60prior_id_list[[reb_id_temp]]
+}
+
+start60prior_sidea_deaths <- rep(NA, 216)
+start60prior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- start60prior_id_list[[i]]
+  start60prior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  start60prior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$start60prior_sidea_deaths <- start60prior_sidea_deaths
+eb_data$start60prior_sideb_deaths <- start60prior_sideb_deaths
+
+start90prior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus90 <- eb_data[i, ]$start90prior
+  reb_name <- eb_data[i, ]$groupname
+  start90prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus90 & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus90 <- eb_data[i, ]$start90prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start90prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus90 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus90 <- eb_data[i, ]$start90prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start90prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus90 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  start90prior_id_list[[gov_id_temp]] <- start90prior_id_list[[reb_id_temp]]
+}
+
+start90prior_sidea_deaths <- rep(NA, 216)
+start90prior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- start90prior_id_list[[i]]
+  start90prior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  start90prior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$start90prior_sidea_deaths <- start90prior_sidea_deaths
+eb_data$start90prior_sideb_deaths <- start90prior_sideb_deaths
+
+start120prior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus120 <- eb_data[i, ]$start120prior
+  reb_name <- eb_data[i, ]$groupname
+  start120prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus120 & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus120 <- eb_data[i, ]$start120prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start120prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus120 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus120 <- eb_data[i, ]$start120prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start120prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus120 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  start120prior_id_list[[gov_id_temp]] <- start120prior_id_list[[reb_id_temp]]
+}
+
+start120prior_sidea_deaths <- rep(NA, 216)
+start120prior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- start120prior_id_list[[i]]
+  start120prior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  start120prior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$start120prior_sidea_deaths <- start120prior_sidea_deaths
+eb_data$start120prior_sideb_deaths <- start120prior_sideb_deaths
+
+start150prior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus150 <- eb_data[i, ]$start150prior
+  reb_name <- eb_data[i, ]$groupname
+  start150prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus150 & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus150 <- eb_data[i, ]$start150prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start150prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus150 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus150 <- eb_data[i, ]$start150prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start150prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus150 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  start150prior_id_list[[gov_id_temp]] <- start150prior_id_list[[reb_id_temp]]
+}
+
+start150prior_sidea_deaths <- rep(NA, 216)
+start150prior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- start150prior_id_list[[i]]
+  start150prior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  start150prior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$start150prior_sidea_deaths <- start150prior_sidea_deaths
+eb_data$start150prior_sideb_deaths <- start150prior_sideb_deaths
+
+start180prior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus180 <- eb_data[i, ]$start180prior
+  reb_name <- eb_data[i, ]$groupname
+  start180prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus180 & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus180 <- eb_data[i, ]$start180prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start180prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus180 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus180 <- eb_data[i, ]$start180prior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start180prior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus180 &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  start180prior_id_list[[gov_id_temp]] <- start180prior_id_list[[reb_id_temp]]
+}
+
+start180prior_sidea_deaths <- rep(NA, 216)
+start180prior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- start180prior_id_list[[i]]
+  start180prior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  start180prior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$start180prior_sidea_deaths <- start180prior_sidea_deaths
+eb_data$start180prior_sideb_deaths <- start180prior_sideb_deaths
+
+start1yearprior_id_list <- list()
+for ( i in reb_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus1year <- eb_data[i, ]$start1yearprior
+  reb_name <- eb_data[i, ]$groupname
+  start1yearprior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus1year & ged$side_b == reb_name, ]$id
+}
+farc_eln_row_nums <- eb_data %>%
+  filter(groupname == 'FARC+ELN') %>% select(id) %>% as_vector()
+kdp_puk_row_nums <- eb_data %>%
+  filter(groupname == 'KDP+PUK') %>% select(id) %>% as_vector()
+for ( i in farc_eln_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus1year <- eb_data[i, ]$start1yearprior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start1yearprior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus1year &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+for ( i in kdp_puk_row_nums ) {
+  neg_date <- eb_data[i, ]$neg_startdate_early
+  neg_date_minus1year <- eb_data[i, ]$start1yearprior
+  reb_name <- unlist(strsplit(eb_data[i, ]$groupname, '[+]'))
+  start1yearprior_id_list[[i]] <-
+    ged[as.Date(ged$date_start) <= neg_date &
+        as.Date(ged$date_start) > neg_date_minus1year &
+        (ged$side_b == reb_name[1] | ged$side_b == reb_name[2]), ]$id
+}
+
+for ( i in reb_row_nums ) {
+  reb_id_temp <- eb_data[i, ]$id
+  psbargaining_temp <- eb_data[i, ]$psbargaining
+  within_psbargaining_dyadid_temp <- eb_data[i, ]$within_psbargaining_dyadid
+  gov_id_temp <- eb_data[eb_data$psbargaining == psbargaining_temp &
+    eb_data$within_psbargaining_dyadid == within_psbargaining_dyadid_temp &
+    eb_data$id != reb_id_temp, ]$id
+  start1yearprior_id_list[[gov_id_temp]] <- start1yearprior_id_list[[reb_id_temp]]
+}
+
+start1yearprior_sidea_deaths <- rep(NA, 216)
+start1yearprior_sideb_deaths <- rep(NA, 216)
+for ( i in 1:216 ) {
+  ged_ids <- start1yearprior_id_list[[i]]
+  start1yearprior_sidea_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_a)
+  start1yearprior_sideb_deaths[i] <- sum(ged[ged$id %in% ged_ids, ]$deaths_b)
+}
+eb_data$start1yearprior_sidea_deaths <- start1yearprior_sidea_deaths
+eb_data$start1yearprior_sideb_deaths <- start1yearprior_sideb_deaths
+
+# create relative death measures
+eb_data <- eb_data %>% mutate(
+  reldeaths30end =
+    case_when(rebel == 0 ~ end30prior_sidea_deaths /
+              (end30prior_sidea_deaths + end30prior_sideb_deaths),
+              rebel == 1 ~ end30prior_sideb_deaths /
+              (end30prior_sidea_deaths + end30prior_sideb_deaths)),
+  reldeaths60end =
+    case_when(rebel == 0 ~ end60prior_sidea_deaths /
+              (end60prior_sidea_deaths + end60prior_sideb_deaths),
+              rebel == 1 ~ end60prior_sideb_deaths /
+              (end60prior_sidea_deaths + end60prior_sideb_deaths)),
+  reldeaths90end =
+    case_when(rebel == 0 ~ end90prior_sidea_deaths /
+              (end90prior_sidea_deaths + end90prior_sideb_deaths),
+              rebel == 1 ~ end90prior_sideb_deaths /
+              (end90prior_sidea_deaths + end90prior_sideb_deaths)),
+  reldeaths120end =
+    case_when(rebel == 0 ~ end120prior_sidea_deaths /
+              (end120prior_sidea_deaths + end120prior_sideb_deaths),
+              rebel == 1 ~ end120prior_sideb_deaths /
+              (end120prior_sidea_deaths + end120prior_sideb_deaths)),
+  reldeaths150end =
+    case_when(rebel == 0 ~ end150prior_sidea_deaths /
+              (end150prior_sidea_deaths + end150prior_sideb_deaths),
+              rebel == 1 ~ end150prior_sideb_deaths /
+              (end150prior_sidea_deaths + end150prior_sideb_deaths)),
+  reldeaths180end =
+    case_when(rebel == 0 ~ end180prior_sidea_deaths /
+              (end180prior_sidea_deaths + end180prior_sideb_deaths),
+              rebel == 1 ~ end180prior_sideb_deaths /
+              (end180prior_sidea_deaths + end180prior_sideb_deaths)),
+  reldeaths1yearend =
+    case_when(rebel == 0 ~ end1yearprior_sidea_deaths /
+              (end1yearprior_sidea_deaths + end1yearprior_sideb_deaths),
+              rebel == 1 ~ end1yearprior_sideb_deaths /
+              (end1yearprior_sidea_deaths + end1yearprior_sideb_deaths)),
+  reldeaths30start =
+    case_when(rebel == 0 ~ start30prior_sidea_deaths /
+              (start30prior_sidea_deaths + start30prior_sideb_deaths),
+              rebel == 1 ~ start30prior_sideb_deaths /
+              (start30prior_sidea_deaths + start30prior_sideb_deaths)),
+  reldeaths60start =
+    case_when(rebel == 0 ~ start60prior_sidea_deaths /
+              (start60prior_sidea_deaths + start60prior_sideb_deaths),
+              rebel == 1 ~ start60prior_sideb_deaths /
+              (start60prior_sidea_deaths + start60prior_sideb_deaths)),
+  reldeaths90start =
+    case_when(rebel == 0 ~ start90prior_sidea_deaths /
+              (start90prior_sidea_deaths + start90prior_sideb_deaths),
+              rebel == 1 ~ start90prior_sideb_deaths /
+              (start90prior_sidea_deaths + start90prior_sideb_deaths)),
+  reldeaths120start =
+    case_when(rebel == 0 ~ start120prior_sidea_deaths /
+              (start120prior_sidea_deaths + start120prior_sideb_deaths),
+              rebel == 1 ~ start120prior_sideb_deaths /
+              (start120prior_sidea_deaths + start120prior_sideb_deaths)),
+  reldeaths150start =
+    case_when(rebel == 0 ~ start150prior_sidea_deaths /
+              (start150prior_sidea_deaths + start150prior_sideb_deaths),
+              rebel == 1 ~ start150prior_sideb_deaths /
+              (start150prior_sidea_deaths + start150prior_sideb_deaths)),
+  reldeaths180start =
+    case_when(rebel == 0 ~ start180prior_sidea_deaths /
+              (start180prior_sidea_deaths + start180prior_sideb_deaths),
+              rebel == 1 ~ start180prior_sideb_deaths /
+              (start180prior_sidea_deaths + start180prior_sideb_deaths)),
+  reldeaths1yearstart =
+    case_when(rebel == 0 ~ start1yearprior_sidea_deaths /
+              (start1yearprior_sidea_deaths + start1yearprior_sideb_deaths),
+              rebel == 1 ~ start1yearprior_sideb_deaths /
+              (start1yearprior_sidea_deaths + start1yearprior_sideb_deaths))
+)
+
+# creating leader identifiers for bargaining counterpart of dyad owner
+print(eb_data %>% filter(noofparticipants > 2) %>%
+      select(psbargaining, groupname, dyad, dyad1_leader), n = 68)
+## psbargaining = 50010, R1 = FUNCINPEC, R2 = KPNLF, R3 = KR
+## psbargaining = 50110, R1 = FUNCINPEC, R2 = KPNLF
+## psbargaining = 50120, R1 = FUNCINPEC, R2 = KPNLF
+## psbargaining = 50210, R1 = FUNCINPEC, R2 = KPNLF, R3 = KR
+## psbargaining = 50310, R1 = FUNCINPEC, R2 = KPNLF, R3 = KR
+## psbargaining = 50410, R1 = KPNLF, R2 = KR
+## psbargaining = 50610, R1 = KPNLF, R2 = KR
+## psbargaining = 50710, R1 = KPNLF, R2 = KR
+## psbargaining = 60010, R1 = FARC+ELN (will be coded like 2-group cases)
+## psbargaining = 110010, R1 = KDP+PUK (will be coded like 2-group cases)
+## psbargaining = 110110, R1 = KDP+PUK (will be coded like 2-group cases)
+## psbargaining = 110210, R1 = KDP+PUK (will be coded like 2-group cases)
+## psbargaining = 110310, R1 = KDP+PUK (will be coded like 2-group cases)
+## psbargaining = 120010, R1 = NPFL, R2 = INPFL
+## psbargaining = 120110, R1 = NPFL, R2 = INPFL
+eb_data <- eb_data %>% mutate(
+  sideb_leader = case_when(
+    (noofparticipants == 2 &
+     substr(as.character(groupname), 1, 10) == "Government" &
+     substr(as.character(p2leaderpartcipation), 1, 1) == "Y") ~ 1,
+    (noofparticipants == 2 &
+     substr(as.character(groupname), 1, 10) != "Government" &
+     substr(as.character(p1leaderpartcipation), 1, 1) == "Y") ~ 1,
+    (noofparticipants == 2 &
+     substr(as.character(groupname), 1, 10) == "Government" &
+     substr(as.character(p2leaderpartcipation), 1, 1) == "N") ~ 0,
+    (noofparticipants == 2 &
+     substr(as.character(groupname), 1, 10) != "Government" &
+     substr(as.character(p1leaderpartcipation), 1, 1) == "N") ~ 0,
+    (psbargaining == 50010 & dyad == "G-R1") ~ 0,
+    (psbargaining == 50010 & dyad == "G-R2") ~ 1,
+    (psbargaining == 50010 & dyad == "G-R3") ~ 1,
+    (psbargaining == 50010 & dyad == "R1-G") ~ 0,
+    (psbargaining == 50010 & dyad == "R2-G") ~ 0,
+    (psbargaining == 50010 & dyad == "R3-G") ~ 0,
+    (psbargaining == 50110 & dyad == "G-R1") ~ 0,
+    (psbargaining == 50110 & dyad == "G-R2") ~ 1,
+    (psbargaining == 50110 & dyad == "R1-G") ~ 0,
+    (psbargaining == 50110 & dyad == "R2-G") ~ 0,
+    (psbargaining == 50120 & dyad == "G-R1") ~ 0,
+    (psbargaining == 50120 & dyad == "G-R2") ~ 1,
+    (psbargaining == 50120 & dyad == "R1-G") ~ 0,
+    (psbargaining == 50120 & dyad == "R2-G") ~ 0,
+    (psbargaining == 50210 & dyad == "G-R1") ~ 0,
+    (psbargaining == 50210 & dyad == "G-R2") ~ 1,
+    (psbargaining == 50210 & dyad == "G-R3") ~ 1,
+    (psbargaining == 50210 & dyad == "R1-G") ~ 0,
+    (psbargaining == 50210 & dyad == "R2-G") ~ 0,
+    (psbargaining == 50210 & dyad == "R3-G") ~ 0,
+    (psbargaining == 50310 & dyad == "G-R1") ~ 0,
+    (psbargaining == 50310 & dyad == "G-R2") ~ 1,
+    (psbargaining == 50310 & dyad == "G-R3") ~ 1,
+    (psbargaining == 50310 & dyad == "R1-G") ~ 0,
+    (psbargaining == 50310 & dyad == "R2-G") ~ 0,
+    (psbargaining == 50310 & dyad == "R3-G") ~ 0,
+    (psbargaining == 50410 & dyad == "G-R1") ~ 1,
+    (psbargaining == 50410 & dyad == "G-R2") ~ 1,
+    (psbargaining == 50410 & dyad == "R1-G") ~ 0,
+    (psbargaining == 50410 & dyad == "R2-G") ~ 0,
+    (psbargaining == 50610 & dyad == "G-R1") ~ 1,
+    (psbargaining == 50610 & dyad == "G-R2") ~ 1,
+    (psbargaining == 50610 & dyad == "R1-G") ~ 0,
+    (psbargaining == 50610 & dyad == "R2-G") ~ 0,
+    (psbargaining == 50710 & dyad == "G-R1") ~ 1,
+    (psbargaining == 50710 & dyad == "G-R2") ~ 1,
+    (psbargaining == 50710 & dyad == "R1-G") ~ 0,
+    (psbargaining == 50710 & dyad == "R2-G") ~ 0,
+    (psbargaining == 50910 & dyad == "G-R1") ~ 0,
+    (psbargaining == 50910 & dyad == "G-R2") ~ 1,
+    (psbargaining == 50910 & dyad == "G-R3") ~ 1,
+    (psbargaining == 50910 & dyad == "R1-G") ~ 0,
+    (psbargaining == 50910 & dyad == "R2-G") ~ 0,
+    (psbargaining == 50910 & dyad == "R3-G") ~ 0,
+    (psbargaining == 51010 & dyad == "G-R1") ~ 0,
+    (psbargaining == 51010 & dyad == "G-R2") ~ 1,
+    (psbargaining == 51010 & dyad == "G-R3") ~ 1,
+    (psbargaining == 51010 & dyad == "R1-G") ~ 0,
+    (psbargaining == 51010 & dyad == "R2-G") ~ 0,
+    (psbargaining == 51010 & dyad == "R3-G") ~ 0,
+    (psbargaining == 60010) ~ 0,
+    (psbargaining == 110010) ~ 1,
+    (psbargaining == 110110) ~ 1,
+    (psbargaining == 110210) ~ 1,
+    (psbargaining == 110310) ~ 1,
+    (psbargaining == 120010 & dyad == "G-R1") ~ 1,
+    (psbargaining == 120010 & dyad == "G-R2") ~ 1,
+    (psbargaining == 120010 & dyad == "R1-G") ~ 0,
+    (psbargaining == 120010 & dyad == "R2-G") ~ 0,
+    (psbargaining == 120110 & dyad == "G-R1") ~ 0,
+    (psbargaining == 120110 & dyad == "G-R2") ~ 1,
+    (psbargaining == 120110 & dyad == "R1-G") ~ 1,
+    (psbargaining == 120110 & dyad == "R2-G") ~ 1))
+print(eb_data %>%
+      select(psbargaining, groupname, dyad, dyad1_leader, sideb_leader),
+      n = 250)
+## special cases:
+## psbargaining = 50510
+##  - Sunhee's coding of KPNLF's dyad is 1 for dyad1_leader, but the notes on
+##    p2leaderpartcipation say "Yes & No"; the notes for p2leaderparticipation
+##    are not relevant
+## psbargaining = 90010
+##  - p2leaderpartcipation notes say "No", but dyad1_leader is missing; I
+##    think this is a mistake
+##      *** we don't know, but in every other case we were able to identify
+##          a leader as a leader through media reports
+eb_data[eb_data$psbargaining == 50510 &
+        eb_data$groupname == "Government of Cambodia", ]$sideb_leader <- 1
+eb_data[eb_data$psbargaining == 90010 &
+        eb_data$groupname == "OLF", ]$dyad1_leader <- 0
+eb_data[eb_data$psbargaining == 90010 &
+        eb_data$groupname == "OLF", ]$dyadicleader <- 0
+
+print(eb_data %>%
+      select(psbargaining, groupname, dyad, dyad1_leader, sideb_leader),
+      n = 250)
+
+#eb_data <- eb_data %>%
+#  select(conflictid, year, polityiv, location, sidea, sidea2nd, sideb, #dyad1_myoffer, dyad1_myshare, dyad1_otheroffer, dyad1_relativedeath,
+#         dyad1_relativetroops, dyad1_otheroffer, dyad1_myoffer, dyad1_outcome,
+#         polityiv, dyadicmixedleader, 
+#         mediation_derouen, noofparticipants, location_foreign, dyad1_leader,
+#         dyadicleader, dyadicexperience, pps, mulps, intensitylevel,
+#         psbargaining, counterpartleader, sideb_leader, groupname, dyad)
+head(eb_data)
+#```
+
+# Analysis from Sunhee's Draft
+
+## Table 1
+#```{r}
+tab01 <- cbind(eb_data$myoffer_band %>% table(),
+               round(eb_data$myoffer_band %>% table() /
+                 (eb_data$myoffer_band %>% table() %>% sum(.)), 2),
+               eb_data$myshare_band %>% table(),
+               round(eb_data$myshare_band %>% table() /
+                 (eb_data$myshare_band %>% table() %>% sum(.)), 2))
+rownames(tab01) <- c('0-0.1', '0.11-0.2', '0.21-0.3', '0.31-0.4', '0.41-0.5',
+                     '0.51-0.6', '0.61-0.7', '0.71-0.8', '0.81-0.9', '0.91-1')
+colnames(tab01) <- c('Offer Obs.', 'Offer %', 'Demand Obs.', 'Demand %')
+tab01
+#```
+
+## Table 2
+#```{r}
+tab02 <- as.matrix(eb_data %>% group_by(dyad1_leader) %>%
+  summarize(meanoffer = round(mean(dyad1_myoffer, na.rm = TRUE), 2),
+            rejectrate = round(mean(reject, na.rm = TRUE) * 100), 0))[2:1, 2:3]
+colnames(tab02) <- c('Offer to Counterpart (0-1)', 'Rejection Rates (%)')
+rownames(tab02) <- c('Leaders (126)', 'Delegates (89)')
+tab02
+#```
+
+## Table 3
+#```{r}
+tab03_c1 <- lm(dyad1_myoffer ~ dyad1_leader + dyadicleader + dyadicexperience +
+               dyad1_relativedeath + pps + mulps + mediation_derouen +
+               noofparticipants + location_foreign + auto + intensitylevel,
+               data = eb_data)
+vcov_tab03_c1 <- cluster.vcov(tab03_c1, eb_data$psbargaining)
+tab03_c1_clust <- coeftest(tab03_c1, vcov_tab03_c1)
+
+tab03_c2 <- lm(dyad1_myoffer ~ dyad1_leader + dyadicleader + dyadicexperience +
+               dyad1_relativedeath + pps + mulps + mediation_derouen +
+               noofparticipants + location_foreign, data = eb_data)
+vcov_tab03_c2 <- cluster.vcov(tab03_c2, eb_data$psbargaining)
+tab03_c2_clust <- coeftest(tab03_c2, vcov_tab03_c2)
+
+tab03_c3 <- lm(dyad1_myoffer ~ dyad1_leader + dyadicleader + dyadicexperience +
+               dyad1_relativedeath, data = eb_data)
+vcov_tab03_c3 <- cluster.vcov(tab03_c3, eb_data$psbargaining)
+tab03_c3_clust <- coeftest(tab03_c3, vcov_tab03_c3)
+
+tab03_c4 <- lm(dyad1_myoffer ~ dyad1_leader + dyadicleader, data = eb_data)
+vcov_tab03_c4 <- cluster.vcov(tab03_c4, eb_data$psbargaining)
+tab03_c4_clust <- coeftest(tab03_c4, vcov_tab03_c4)
+
+stargazer(tab03_c1_clust, tab03_c2_clust, tab03_c3_clust, tab03_c4_clust,
+          add.lines = list(c('Observations', nobs(tab03_c1),
+          nobs(tab03_c2), nobs(tab03_c3), nobs(tab03_c4)), c('R-squared',
+          round(summary(tab03_c1)$r.squared, 3), 
+          round(summary(tab03_c2)$r.squared, 3),
+          round(summary(tab03_c3)$r.squared, 3),
+          round(summary(tab03_c4)$r.squared, 3))),
+          covariate.labels = c('Leader', 'Dyadic Leader',
+          'Dyadic Prior Participation', 'Battle Strength', 'Political PS',
+          'Multiple PS', 'Mediation', 'No. of Bargaining Sides',
+          'Foreign Location', 'Autocracy', 'Intensity Level'),
+          type = 'text')
+
+#```
+
+# Alternative Table 3 Analysis
+#```{r}
+# Alternative Table 3 using complete cases only in column 4
+eb_data_tab03_complete <- eb_data %>% filter(!is.na(dyad1_myoffer),
+  !is.na(dyad1_leader), !is.na(dyadicleader), !is.na(dyadicexperience),
+  !is.na(dyad1_relativedeath), !is.na(pps), !is.na(mulps),
+  !is.na(mediation_derouen), !is.na(noofparticipants), !is.na(location_foreign),
+  !is.na(auto), !is.na(intensitylevel), !is.na(psbargaining))
+
+tab03_c4_compl <- lm(dyad1_myoffer ~ dyad1_leader + dyadicleader,
+                   data = eb_data_tab03_complete)
+vcov_tab03_c4_compl <- cluster.vcov(tab03_c4_compl,
+                                    eb_data_tab03_complete$psbargaining)
+tab03_c4_clust_compl <- coeftest(tab03_c4_compl, vcov_tab03_c4_compl)
+
+stargazer(tab03_c1_clust, tab03_c2_clust, tab03_c3_clust, tab03_c4_clust_compl,
+          add.lines = list(c('Observations', nobs(tab03_c1),
+          nobs(tab03_c2), nobs(tab03_c3), nobs(tab03_c4_compl)), c('R-squared',
+          round(summary(tab03_c1)$r.squared, 3), 
+          round(summary(tab03_c2)$r.squared, 3),
+          round(summary(tab03_c3)$r.squared, 3),
+          round(summary(tab03_c4_compl)$r.squared, 3))),
+          covariate.labels = c('Leader', 'Dyadic Leader',
+          'Dyadic Prior Participation', 'Battle Strength', 'Political PS',
+          'Multiple PS', 'Mediation', 'No. of Bargaining Sides',
+          'Foreign Location', 'Autocracy', 'Intensity Level'),
+          type = 'text')
+
+## Alternative Table 3 using counterpartleader dummy instead of dyadicleader
+tab03_c1_alt <- lm(dyad1_myoffer ~ dyad1_leader*sideb_leader +
+                   dyadicexperience + dyad1_relativedeath + pps + mulps +
+                   mediation_derouen + noofparticipants + location_foreign +
+                   auto + intensitylevel, data = eb_data_tab03_complete)
+vcov_tab03_c1_alt <-
+  cluster.vcov(tab03_c1_alt, eb_data_tab03_complete$psbargaining)
+tab03_c1_clust_alt <- coeftest(tab03_c1_alt, vcov_tab03_c1_alt)
+
+tab03_c2_alt <- lm(dyad1_myoffer ~ dyad1_leader*sideb_leader +
+                   dyadicexperience + dyad1_relativedeath + pps + mulps +
+                   mediation_derouen + noofparticipants + location_foreign,
+                   data = eb_data_tab03_complete)
+vcov_tab03_c2_alt <-
+  cluster.vcov(tab03_c2_alt, eb_data_tab03_complete$psbargaining)
+tab03_c2_clust_alt <- coeftest(tab03_c2_alt, vcov_tab03_c2_alt)
+
+tab03_c3_alt <- lm(dyad1_myoffer ~ dyad1_leader*sideb_leader +
+                   dyadicexperience + dyad1_relativedeath,
+                   data = eb_data_tab03_complete)
+vcov_tab03_c3_alt <-
+  cluster.vcov(tab03_c3_alt, eb_data_tab03_complete$psbargaining)
+tab03_c3_clust_alt <- coeftest(tab03_c3_alt, vcov_tab03_c3_alt)
+
+tab03_c4_alt <- lm(dyad1_myoffer ~ dyad1_leader*sideb_leader,
+                   data = eb_data_tab03_complete)
+vcov_tab03_c4_alt <-
+  cluster.vcov(tab03_c4_alt, eb_data_tab03_complete$psbargaining)
+tab03_c4_clust_alt <- coeftest(tab03_c4_alt, vcov_tab03_c4_alt)
+
+stargazer(tab03_c1_clust_alt, tab03_c2_clust_alt, tab03_c3_clust_alt,
+          tab03_c4_clust_alt, add.lines = list(c('Observations',
+          nobs(tab03_c1_alt), nobs(tab03_c2_alt), nobs(tab03_c3_alt),
+          nobs(tab03_c4_alt)),
+          c('R-squared', round(summary(tab03_c1)$r.squared, 3),
+          round(summary(tab03_c2)$r.squared, 3),
+          round(summary(tab03_c3)$r.squared, 3),
+          round(summary(tab03_c4)$r.squared, 3))), type = 'text')
+#          covariate.labels = c('Leader', 'Counterpart Leader',
+#          'Leader*Counterpart Leader', 'Dyadic Prior Participation',
+#          'Battle Strength', 'Political PS', 'Multiple PS', 'Mediation',
+#          'No. of Bargaining Sides', 'Foreign Location', 'Autocracy',
+#          'Intensity Level'), type = 'text')
+
+# model predictions
+tab03_c1_alt_fitted_data <- data.frame(dyad1_leader = c(0, 1, 0, 1),
+  sideb_leader = c(0, 0, 1, 1), dyadicexperience = 1,
+  dyad1_relativedeath =
+    with(eb_data_tab03_complete, mean(dyad1_relativedeath, na.rm = TRUE)),
+  pps = 1, mulps = 0, mediation_derouen = 1, noofparticipants = 2,
+  location_foreign = 1, auto = 1, intensitylevel = 1)
+
+tab03_c2_alt_fitted_data <- data.frame(dyad1_leader = c(0, 1, 0, 1),
+  sideb_leader = c(0, 0, 1, 1), dyadicexperience = 1,
+  dyad1_relativedeath =
+    with(eb_data_tab03_complete, mean(dyad1_relativedeath, na.rm = TRUE)),
+  pps = 1, mulps = 0, mediation_derouen = 1, noofparticipants = 2,
+  location_foreign = 1)
+
+tab03_c3_alt_fitted_data <- data.frame(dyad1_leader = c(0, 1, 0, 1),
+  sideb_leader = c(0, 0, 1, 1), dyadicexperience = 1,
+  dyad1_relativedeath =
+    with(eb_data_tab03_complete, mean(dyad1_relativedeath, na.rm = TRUE)))
+
+tab03_c4_alt_fitted_data <- data.frame(dyad1_leader = c(0, 1, 0, 1),
+                                       sideb_leader = c(0, 0, 1, 1))
+
+
+tab03_c1_alt_fitted_vals95 <- predict(object = tab03_c1_alt,
+                                      newdata = tab03_c1_alt_fitted_data,
+                                      interval = 'prediction', level = 0.95)
+tab03_c2_alt_fitted_vals95 <- predict(object = tab03_c2_alt,
+                                      newdata = tab03_c2_alt_fitted_data,
+                                      interval = 'prediction', level = 0.95)
+tab03_c3_alt_fitted_vals95 <- predict(object = tab03_c3_alt,
+                                      newdata = tab03_c3_alt_fitted_data,
+                                      interval = 'prediction', level = 0.95)
+tab03_c4_alt_fitted_vals95 <- predict(object = tab03_c4_alt,
+                                      newdata = tab03_c4_alt_fitted_data,
+                                      interval = 'prediction', level = 0.95)
+
+tab03_c1_alt_fitted_vals90 <- predict(object = tab03_c1_alt,
+                                      newdata = tab03_c1_alt_fitted_data,
+                                      interval = 'prediction', level = 0.90)
+tab03_c2_alt_fitted_vals90 <- predict(object = tab03_c2_alt,
+                                      newdata = tab03_c2_alt_fitted_data,
+                                      interval = 'prediction', level = 0.90)
+tab03_c3_alt_fitted_vals90 <- predict(object = tab03_c3_alt,
+                                      newdata = tab03_c3_alt_fitted_data,
+                                      interval = 'prediction', level = 0.90)
+tab03_c4_alt_fitted_vals90 <- predict(object = tab03_c4_alt,
+                                      newdata = tab03_c4_alt_fitted_data,
+                                      interval = 'prediction', level = 0.90)
+pred_offer_c1_alt_data <-
+  data.frame(cbind(id = c(1, 2, 3, 4),
+                   dyad1_leader = tab03_c1_alt_fitted_data[, 1],
+                   sideb_leader = tab03_c1_alt_fitted_data[, 2],
+                   fit = tab03_c1_alt_fitted_vals95[, 1],
+                   lwr95 = tab03_c1_alt_fitted_vals95[, 2],
+                   upr95 = tab03_c1_alt_fitted_vals95[, 3],
+                   lwr90 = tab03_c1_alt_fitted_vals90[, 2],
+                   upr90 = tab03_c1_alt_fitted_vals90[, 3])) %>% as_tibble()
+pred_offer_c1_alt_data
+
+pred_offer_c2_alt_data <-
+  data.frame(cbind(id = c(1, 2, 3, 4),
+                   dyad1_leader = tab03_c2_alt_fitted_data[, 1],
+                   sideb_leader = tab03_c2_alt_fitted_data[, 2],
+                   fit = tab03_c2_alt_fitted_vals95[, 1],
+                   lwr95 = tab03_c2_alt_fitted_vals95[, 2],
+                   upr95 = tab03_c2_alt_fitted_vals95[, 3],
+                   lwr90 = tab03_c2_alt_fitted_vals90[, 2],
+                   upr90 = tab03_c2_alt_fitted_vals90[, 3])) %>% as_tibble()
+pred_offer_c2_alt_data
+
+pred_offer_c3_alt_data <-
+  data.frame(cbind(id = c(1, 2, 3, 4),
+                   dyad1_leader = tab03_c3_alt_fitted_data[, 1],
+                   sideb_leader = tab03_c3_alt_fitted_data[, 2],
+                   fit = tab03_c3_alt_fitted_vals95[, 1],
+                   lwr95 = tab03_c3_alt_fitted_vals95[, 2],
+                   upr95 = tab03_c3_alt_fitted_vals95[, 3],
+                   lwr90 = tab03_c3_alt_fitted_vals90[, 2],
+                   upr90 = tab03_c3_alt_fitted_vals90[, 3])) %>% as_tibble()
+pred_offer_c3_alt_data
+
+pred_offer_c4_alt_data <-
+  data.frame(cbind(id = c(1, 2, 3, 4),
+                   dyad1_leader = tab03_c4_alt_fitted_data[, 1],
+                   sideb_leader = tab03_c4_alt_fitted_data[, 2],
+                   fit = tab03_c4_alt_fitted_vals95[, 1],
+                   lwr95 = tab03_c4_alt_fitted_vals95[, 2],
+                   upr95 = tab03_c4_alt_fitted_vals95[, 3],
+                   lwr90 = tab03_c4_alt_fitted_vals90[, 2],
+                   upr90 = tab03_c4_alt_fitted_vals90[, 3])) %>% as_tibble()
+pred_offer_c4_alt_data
+
+## marginal effects
+var_dyad1_leader_c1_alt <- vcov_tab03_c1_alt['dyad1_leader', 'dyad1_leader']
+var_sideb_leader_c1_alt <- vcov_tab03_c1_alt['sideb_leader', 'sideb_leader']
+var_interaction_c1_alt <-
+  vcov_tab03_c1_alt['dyad1_leader:sideb_leader', 'dyad1_leader:sideb_leader']
+cov_dyad1_interaction_c1_alt <-
+  vcov_tab03_c1_alt['dyad1_leader', 'dyad1_leader:sideb_leader']
+cov_sideb_interaction_c1_alt <-
+  vcov_tab03_c1_alt['sideb_leader', 'dyad1_leader:sideb_leader']
+se_dyad1_leader_total_c1_alt <-
+  sqrt(var_dyad1_leader_c1_alt + var_interaction_c1_alt + 2 *
+       cov_dyad1_interaction_c1_alt)
+
+var_dyad1_leader_c2_alt <- vcov_tab03_c2_alt['dyad1_leader', 'dyad1_leader']
+var_sideb_leader_c2_alt <- vcov_tab03_c2_alt['sideb_leader', 'sideb_leader']
+var_interaction_c2_alt <-
+  vcov_tab03_c2_alt['dyad1_leader:sideb_leader', 'dyad1_leader:sideb_leader']
+cov_dyad1_interaction_c2_alt <-
+  vcov_tab03_c2_alt['dyad1_leader', 'dyad1_leader:sideb_leader']
+cov_sideb2_interaction_c2_alt <-
+  vcov_tab03_c2_alt['sideb_leader', 'dyad1_leader:sideb_leader']
+se_dyad1_leader_total_c2_alt <-
+  sqrt(var_dyad1_leader_c2_alt + var_interaction_c2_alt + 2 *
+       cov_dyad1_interaction_c2_alt)
+
+var_dyad1_leader_c3_alt <- vcov_tab03_c3_alt['dyad1_leader', 'dyad1_leader']
+var_sideb_leader_c3_alt <- vcov_tab03_c3_alt['sideb_leader', 'sideb_leader']
+var_interaction_c3_alt <-
+  vcov_tab03_c3_alt['dyad1_leader:sideb_leader', 'dyad1_leader:sideb_leader']
+cov_dyad1_interaction_c3_alt <-
+  vcov_tab03_c3_alt['dyad1_leader', 'dyad1_leader:sideb_leader']
+cov_sideb_interaction_c3_alt <-
+  vcov_tab03_c3_alt['sideb_leader', 'dyad1_leader:sideb_leader']
+se_dyad1_leader_total_c3_alt <-
+  sqrt(var_dyad1_leader_c3_alt + var_interaction_c3_alt + 2 *
+       cov_dyad1_interaction_c3_alt)
+
+var_dyad1_leader_c4_alt <- vcov_tab03_c4_alt['dyad1_leader', 'dyad1_leader']
+var_sideb_leader_c4_alt <- vcov_tab03_c4_alt['sideb_leader', 'sideb_leader']
+var_interaction_c4_alt <-
+  vcov_tab03_c4_alt['dyad1_leader:sideb_leader', 'dyad1_leader:sideb_leader']
+cov_dyad1_interaction_c4_alt <-
+  vcov_tab03_c4_alt['dyad1_leader', 'dyad1_leader:sideb_leader']
+cov_sideb_interaction_c4_alt <-
+  vcov_tab03_c4_alt['sideb_leader', 'dyad1_leader:sideb_leader']
+se_dyad1_leader_total_c4_alt <-
+  sqrt(var_dyad1_leader_c4_alt + var_interaction_c4_alt + 2 *
+       cov_dyad1_interaction_c4_alt)
+
+
+me_lead_vs_del_c1_alt <- coef(tab03_c1_clust_alt)['dyad1_leader']
+me_lead_vs_del_95ub_c1_alt <-
+  me_lead_vs_del_c1_alt + 1.96 * sqrt(var_dyad1_leader_c1_alt)
+me_lead_vs_del_95lb_c1_alt <-
+  me_lead_vs_del_c1_alt - 1.96 * sqrt(var_dyad1_leader_c1_alt)
+me_lead_vs_del_90ub_c1_alt <-
+  me_lead_vs_del_c1_alt + 1.645 * sqrt(var_dyad1_leader_c1_alt)
+me_lead_vs_del_90lb_c1_alt <-
+  me_lead_vs_del_c1_alt - 1.645 * sqrt(var_dyad1_leader_c1_alt)
+
+me_lead_vs_lead_c1_alt <- coef(tab03_c1_clust_alt)['dyad1_leader'] +
+  coef(tab03_c1_clust_alt)['sideb_leader']
+me_lead_vs_lead_95ub_c1_alt <-
+  me_lead_vs_lead_c1_alt + 1.96 * se_dyad1_leader_total_c1_alt
+me_lead_vs_lead_95lb_c1_alt <-
+  me_lead_vs_lead_c1_alt - 1.96 * se_dyad1_leader_total_c1_alt
+me_lead_vs_lead_90ub_c1_alt <-
+  me_lead_vs_lead_c1_alt + 1.645 * se_dyad1_leader_total_c1_alt
+me_lead_vs_lead_90lb_c1_alt <-
+  me_lead_vs_lead_c1_alt - 1.645 * se_dyad1_leader_total_c1_alt
+
+me_lead_diff_c1_alt <- coef(tab03_c1_clust_alt)['dyad1_leader:sideb_leader']
+me_lead_diff_95ub_c1_alt <-
+  me_lead_diff_c1_alt + 1.96 * sqrt(var_interaction_c1_alt)
+me_lead_diff_95lb_c1_alt <-
+  me_lead_diff_c1_alt - 1.96 * sqrt(var_interaction_c1_alt)
+me_lead_diff_90ub_c1_alt <-
+  me_lead_diff_c1_alt + 1.645 * sqrt(var_interaction_c1_alt)
+me_lead_diff_90lb_c1_alt <-
+  me_lead_diff_c1_alt - 1.645 * sqrt(var_interaction_c1_alt)
+
+me_lead_vs_del_c2_alt <- coef(tab03_c2_clust_alt)['dyad1_leader']
+me_lead_vs_del_95ub_c2_alt <-
+  me_lead_vs_del_c2_alt + 1.96 * sqrt(var_dyad1_leader_c2_alt)
+me_lead_vs_del_95lb_c2_alt <-
+  me_lead_vs_del_c2_alt - 1.96 * sqrt(var_dyad1_leader_c2_alt)
+me_lead_vs_del_90ub_c2_alt <-
+  me_lead_vs_del_c2_alt + 1.645 * sqrt(var_dyad1_leader_c2_alt)
+me_lead_vs_del_90lb_c2_alt <-
+  me_lead_vs_del_c2_alt - 1.645 * sqrt(var_dyad1_leader_c2_alt)
+
+me_lead_vs_lead_c2_alt <- coef(tab03_c2_clust_alt)['dyad1_leader'] +
+  coef(tab03_c2_clust_alt)['sideb_leader']
+me_lead_vs_lead_95ub_c2_alt <-
+  me_lead_vs_lead_c2_alt + 1.96 * se_dyad1_leader_total_c2_alt
+me_lead_vs_lead_95lb_c2_alt <-
+  me_lead_vs_lead_c2_alt - 1.96 * se_dyad1_leader_total_c2_alt
+me_lead_vs_lead_90ub_c2_alt <-
+  me_lead_vs_lead_c2_alt + 1.645 * se_dyad1_leader_total_c2_alt
+me_lead_vs_lead_90lb_c2_alt <-
+  me_lead_vs_lead_c2_alt - 1.645 * se_dyad1_leader_total_c2_alt
+
+me_lead_diff_c2_alt <- coef(tab03_c2_clust_alt)['dyad1_leader:sideb_leader']
+me_lead_diff_95ub_c2_alt <-
+  me_lead_diff_c2_alt + 1.96 * sqrt(var_interaction_c2_alt)
+me_lead_diff_95lb_c2_alt <-
+  me_lead_diff_c2_alt - 1.96 * sqrt(var_interaction_c2_alt)
+me_lead_diff_90ub_c2_alt <-
+  me_lead_diff_c2_alt + 1.645 * sqrt(var_interaction_c2_alt)
+me_lead_diff_90lb_c2_alt <-
+  me_lead_diff_c2_alt - 1.645 * sqrt(var_interaction_c2_alt)
+
+me_lead_vs_del_c3_alt <- coef(tab03_c3_clust_alt)['dyad1_leader']
+me_lead_vs_del_95ub_c3_alt <-
+  me_lead_vs_del_c3_alt + 1.96 * sqrt(var_dyad1_leader_c3_alt)
+me_lead_vs_del_95lb_c3_alt <-
+  me_lead_vs_del_c3_alt - 1.96 * sqrt(var_dyad1_leader_c3_alt)
+me_lead_vs_del_90ub_c3_alt <-
+  me_lead_vs_del_c3_alt + 1.645 * sqrt(var_dyad1_leader_c3_alt)
+me_lead_vs_del_90lb_c3_alt <-
+  me_lead_vs_del_c3_alt - 1.645 * sqrt(var_dyad1_leader_c3_alt)
+
+me_lead_vs_lead_c3_alt <- coef(tab03_c3_clust_alt)['dyad1_leader'] +
+  coef(tab03_c3_clust_alt)['sideb_leader']
+me_lead_vs_lead_95ub_c3_alt <-
+  me_lead_vs_lead_c3_alt + 1.96 * se_dyad1_leader_total_c3_alt
+me_lead_vs_lead_95lb_c3_alt <-
+  me_lead_vs_lead_c3_alt - 1.96 * se_dyad1_leader_total_c3_alt
+me_lead_vs_lead_90ub_c3_alt <-
+  me_lead_vs_lead_c3_alt + 1.645 * se_dyad1_leader_total_c3_alt
+me_lead_vs_lead_90lb_c3_alt <-
+  me_lead_vs_lead_c3_alt - 1.645 * se_dyad1_leader_total_c3_alt
+
+me_lead_diff_c3_alt <- coef(tab03_c3_clust_alt)['dyad1_leader:sideb_leader']
+me_lead_diff_95ub_c3_alt <-
+  me_lead_diff_c3_alt + 1.96 * sqrt(var_interaction_c3_alt)
+me_lead_diff_95lb_c3_alt <-
+  me_lead_diff_c3_alt - 1.96 * sqrt(var_interaction_c3_alt)
+me_lead_diff_90ub_c3_alt <-
+  me_lead_diff_c3_alt + 1.645 * sqrt(var_interaction_c3_alt)
+me_lead_diff_90lb_c3_alt <-
+  me_lead_diff_c3_alt - 1.645 * sqrt(var_interaction_c3_alt)
+
+me_lead_vs_del_c4_alt <- coef(tab03_c4_clust_alt)['dyad1_leader']
+me_lead_vs_del_95ub_c4_alt <-
+  me_lead_vs_del_c4_alt + 1.96 * sqrt(var_dyad1_leader_c4_alt)
+me_lead_vs_del_95lb_c4_alt <-
+  me_lead_vs_del_c4_alt - 1.96 * sqrt(var_dyad1_leader_c4_alt)
+me_lead_vs_del_90ub_c4_alt <-
+  me_lead_vs_del_c4_alt + 1.645 * sqrt(var_dyad1_leader_c4_alt)
+me_lead_vs_del_90lb_c4_alt <-
+  me_lead_vs_del_c4_alt - 1.645 * sqrt(var_dyad1_leader_c4_alt)
+
+me_lead_vs_lead_c4_alt <- coef(tab03_c4_clust_alt)['dyad1_leader'] +
+  coef(tab03_c4_clust_alt)['sideb_leader']
+me_lead_vs_lead_95ub_c4_alt <-
+  me_lead_vs_lead_c4_alt + 1.96 * se_dyad1_leader_total_c4_alt
+me_lead_vs_lead_95lb_c4_alt <-
+  me_lead_vs_lead_c4_alt - 1.96 * se_dyad1_leader_total_c4_alt
+me_lead_vs_lead_90ub_c4_alt <-
+  me_lead_vs_lead_c4_alt + 1.645 * se_dyad1_leader_total_c4_alt
+me_lead_vs_lead_90lb_c4_alt <-
+  me_lead_vs_lead_c4_alt - 1.645 * se_dyad1_leader_total_c4_alt
+
+me_lead_diff_c4_alt <- coef(tab03_c4_clust_alt)['dyad1_leader:sideb_leader']
+me_lead_diff_95ub_c4_alt <-
+  me_lead_diff_c4_alt + 1.96 * sqrt(var_interaction_c4_alt)
+me_lead_diff_95lb_c4_alt <-
+  me_lead_diff_c4_alt - 1.96 * sqrt(var_interaction_c4_alt)
+me_lead_diff_90ub_c4_alt <-
+  me_lead_diff_c4_alt + 1.645 * sqrt(var_interaction_c4_alt)
+me_lead_diff_90lb_c4_alt <-
+  me_lead_diff_c4_alt - 1.645 * sqrt(var_interaction_c4_alt)
+
+me_leader_data_c1_alt <- data.frame(id = c(3, 2, 1),
+  me = c(me_lead_vs_del_c1_alt, me_lead_vs_lead_c1_alt, me_lead_diff_c1_alt),
+  lb95 = c(me_lead_vs_del_95lb_c1_alt, me_lead_vs_lead_95lb_c1_alt,
+           me_lead_diff_95lb_c1_alt),
+  ub95 = c(me_lead_vs_del_95ub_c1_alt, me_lead_vs_lead_95ub_c1_alt,
+           me_lead_diff_95ub_c1_alt),
+  lb90 = c(me_lead_vs_del_90lb_c1_alt, me_lead_vs_lead_90lb_c1_alt,
+           me_lead_diff_90lb_c1_alt),
+  ub90 = c(me_lead_vs_del_90ub_c1_alt, me_lead_vs_lead_90ub_c1_alt,
+           me_lead_diff_90ub_c1_alt)) %>% as_tibble()
+
+me_leader_data_c2_alt <- data.frame(id = c(3, 2, 1),
+  me = c(me_lead_vs_del_c2_alt, me_lead_vs_lead_c2_alt, me_lead_diff_c2_alt),
+  lb95 = c(me_lead_vs_del_95lb_c2_alt, me_lead_vs_lead_95lb_c2_alt,
+           me_lead_diff_95lb_c2_alt),
+  ub95 = c(me_lead_vs_del_95ub_c2_alt, me_lead_vs_lead_95ub_c2_alt,
+           me_lead_diff_95ub_c2_alt),
+  lb90 = c(me_lead_vs_del_90lb_c2_alt, me_lead_vs_lead_90lb_c2_alt,
+           me_lead_diff_90lb_c2_alt),
+  ub90 = c(me_lead_vs_del_90ub_c2_alt, me_lead_vs_lead_90ub_c2_alt,
+           me_lead_diff_90ub_c2_alt)) %>% as_tibble()
+
+me_leader_data_c3_alt <- data.frame(id = c(3, 2, 1),
+  me = c(me_lead_vs_del_c3_alt, me_lead_vs_lead_c3_alt, me_lead_diff_c3_alt),
+  lb95 = c(me_lead_vs_del_95lb_c3_alt, me_lead_vs_lead_95lb_c3_alt,
+           me_lead_diff_95lb_c3_alt),
+  ub95 = c(me_lead_vs_del_95ub_c3_alt, me_lead_vs_lead_95ub_c3_alt,
+           me_lead_diff_95ub_c3_alt),
+  lb90 = c(me_lead_vs_del_90lb_c3_alt, me_lead_vs_lead_90lb_c3_alt,
+           me_lead_diff_90lb_c3_alt),
+  ub90 = c(me_lead_vs_del_90ub_c3_alt, me_lead_vs_lead_90ub_c3_alt,
+           me_lead_diff_90ub_c3_alt)) %>% as_tibble()
+
+me_leader_data_c4_alt <- data.frame(id = c(3, 2, 1),
+  me = c(me_lead_vs_del_c4_alt, me_lead_vs_lead_c4_alt, me_lead_diff_c4_alt),
+  lb95 = c(me_lead_vs_del_95lb_c4_alt, me_lead_vs_lead_95lb_c4_alt,
+           me_lead_diff_95lb_c4_alt),
+  ub95 = c(me_lead_vs_del_95ub_c4_alt, me_lead_vs_lead_95ub_c4_alt,
+           me_lead_diff_95ub_c4_alt),
+  lb90 = c(me_lead_vs_del_90lb_c4_alt, me_lead_vs_lead_90lb_c4_alt,
+           me_lead_diff_90lb_c4_alt),
+  ub90 = c(me_lead_vs_del_90ub_c4_alt, me_lead_vs_lead_90ub_c4_alt,
+           me_lead_diff_90ub_c4_alt)) %>% as_tibble()
+
+p1_c1 <- ggplot(me_leader_data_c1_alt) +
+  geom_point(aes(x = me, y = id), size = 3) +
+  xlab('Estimated Marginal Effects on Bargaining Offers\nof Leader Status as opposed to Delegate Status') + ylab('') +
+  geom_vline(aes(xintercept = 0), color = 'grey', linetype = 'dashed') +
+  geom_segment(aes(x = lb95, y = id, xend = ub95, yend = id)) +
+  geom_segment(aes(x = lb90, y = id, xend = ub90, yend = id), size = 1.5) +
+  scale_y_continuous(limits = c(1, 3), breaks = c(1, 2, 3),
+    labels = c('Difference', 'Receiver is Leader', 'Receiver is Delegate'))
+
+p1_c2 <- ggplot(me_leader_data_c2_alt) +
+  geom_point(aes(x = me, y = id), size = 3) +
+  xlab('Estimated Marginal Effects on Bargaining Offers\nof Leader Status as opposed to Delegate Status') + ylab('') +
+  geom_vline(aes(xintercept = 0), color = 'grey', linetype = 'dashed') +
+  geom_segment(aes(x = lb95, y = id, xend = ub95, yend = id)) +
+  geom_segment(aes(x = lb90, y = id, xend = ub90, yend = id), size = 1.5) +
+  scale_y_continuous(limits = c(1, 3), breaks = c(1, 2, 3),
+    labels = c('Difference', 'Receiver is Leader', 'Receiver is Delegate'))
+
+p1_c3 <- ggplot(me_leader_data_c3_alt) +
+  geom_point(aes(x = me, y = id), size = 3) +
+  xlab('Estimated Marginal Effects on Bargaining Offers\nof Leader Status as opposed to Delegate Status') + ylab('') +
+  geom_vline(aes(xintercept = 0), color = 'grey', linetype = 'dashed') +
+  geom_segment(aes(x = lb95, y = id, xend = ub95, yend = id)) +
+  geom_segment(aes(x = lb90, y = id, xend = ub90, yend = id), size = 1.5) +
+  scale_y_continuous(limits = c(1, 3), breaks = c(1, 2, 3),
+    labels = c('Difference', 'Receiver is Leader', 'Receiver is Delegate'))
+
+p1_c4 <- ggplot(me_leader_data_c4_alt) +
+  geom_point(aes(x = me, y = id), size = 3) +
+  xlab('Estimated Marginal Effects on Bargaining Offers\nof Leader Status as opposed to Delegate Status') + ylab('') +
+  geom_vline(aes(xintercept = 0), color = 'grey', linetype = 'dashed') +
+  geom_segment(aes(x = lb95, y = id, xend = ub95, yend = id)) +
+  geom_segment(aes(x = lb90, y = id, xend = ub90, yend = id), size = 1.5) +
+  scale_y_continuous(limits = c(1, 3), breaks = c(1, 2, 3),
+    labels = c('Difference', 'Receiver is Leader', 'Receiver is Delegate'))
+
+p1_c1
+p1_c2
+p1_c3
+p1_c4
+#```
+
+#```{r}
+p2_c1 <- ggplot(pred_offer_c4_alt_data) +
+  geom_point(aes(x = fit, y = id), size = 3) +
+  xlab('Predicted Bargaining Offer') + ylab('') +
+  geom_vline(aes(xintercept = 0), color = 'grey', linetype = 'dashed') +
+  geom_segment(aes(x = lwr95, y = id, xend = upr95, yend = id)) +
+  geom_segment(aes(x = lwr90, y = id, xend = upr90, yend = id), size = 1.5) +
+  scale_y_continuous(limits = c(1, 4), breaks = c(1, 2, 3, 4),
+    labels = c('Delegate Offer\nto Delegate', 'Leader Offer\nto Delegate',
+               'Delegate Offer\nto Leader', 'Leader Offer\nto Leader'))
+
+p2_c2 <- ggplot(pred_offer_c2_alt_data) +
+  geom_point(aes(x = fit, y = id), size = 3) +
+  xlab('Predicted Bargaining Offer') + ylab('') +
+  geom_vline(aes(xintercept = 0), color = 'grey', linetype = 'dashed') +
+  geom_segment(aes(x = lwr95, y = id, xend = upr95, yend = id)) +
+  geom_segment(aes(x = lwr90, y = id, xend = upr90, yend = id), size = 1.5) +
+  scale_y_continuous(limits = c(1, 4), breaks = c(1, 2, 3, 4),
+    labels = c('Delegate Offer\nto Delegate', 'Leader Offer\nto Delegate',
+               'Delegate Offer\nto Leader', 'Leader Offer\nto Leader'))
+
+p2_c3 <- ggplot(pred_offer_c3_alt_data) +
+  geom_point(aes(x = fit, y = id), size = 3) +
+  xlab('Predicted Bargaining Offer') + ylab('') +
+  geom_vline(aes(xintercept = 0), color = 'grey', linetype = 'dashed') +
+  geom_segment(aes(x = lwr95, y = id, xend = upr95, yend = id)) +
+  geom_segment(aes(x = lwr90, y = id, xend = upr90, yend = id), size = 1.5) +
+  scale_y_continuous(limits = c(1, 4), breaks = c(1, 2, 3, 4),
+    labels = c('Delegate Offer\nto Delegate', 'Leader Offer\nto Delegate',
+               'Delegate Offer\nto Leader', 'Leader Offer\nto Leader'))
+
+p2_c4 <- ggplot(pred_offer_c4_alt_data) +
+  geom_point(aes(x = fit, y = id), size = 3) +
+  xlab('Predicted Bargaining Offer') + ylab('') +
+  geom_vline(aes(xintercept = 0), color = 'grey', linetype = 'dashed') +
+  geom_segment(aes(x = lwr95, y = id, xend = upr95, yend = id)) +
+  geom_segment(aes(x = lwr90, y = id, xend = upr90, yend = id), size = 1.5) +
+  scale_y_continuous(limits = c(1, 4), breaks = c(1, 2, 3, 4),
+    labels = c('Delegate Offer\nto Delegate', 'Leader Offer\nto Delegate',
+               'Delegate Offer\nto Leader', 'Leader Offer\nto Leader'))
+
+p2_c1
+p2_c2
+p2_c3
+p2_c4
+#```
+
+#```{r}
+## Alternative Table 3 using counterpartleader dummy instead of dyadicleader
+##   and rebel dummy variable
+tab03_c1_alt02 <- lm(dyad1_myoffer ~ dyad1_leader*sideb_leader*rebel +
+                     dyadicexperience + dyad1_relativedeath + pps + mulps +
+                     mediation_derouen + noofparticipants + location_foreign +
+                     auto + intensitylevel, data = eb_data_tab03_complete)
+vcov_tab03_c1_alt02 <-
+  cluster.vcov(tab03_c1_alt02, eb_data_tab03_complete$psbargaining)
+tab03_c1_clust_alt02 <- coeftest(tab03_c1_alt02, vcov_tab03_c1_alt02)
+tab03_c1_clust_alt02
+
+tab03_c2_alt02 <- lm(dyad1_myoffer ~ dyad1_leader*sideb_leader*rebel +
+                     dyadicexperience + dyad1_relativedeath + pps + mulps +
+                     mediation_derouen + noofparticipants + location_foreign,
+                     data = eb_data_tab03_complete)
+vcov_tab03_c2_alt02 <-
+  cluster.vcov(tab03_c2_alt02, eb_data_tab03_complete$psbargaining)
+tab03_c2_clust_alt02 <- coeftest(tab03_c2_alt02, vcov_tab03_c2_alt02)
+tab03_c2_clust_alt02
+
+tab03_c3_alt02 <- lm(dyad1_myoffer ~ dyad1_leader*sideb_leader*rebel +
+                     dyadicexperience + dyad1_relativedeath,
+                     data = eb_data_tab03_complete)
+vcov_tab03_c3_alt02 <-
+  cluster.vcov(tab03_c3_alt02, eb_data_tab03_complete$psbargaining)
+tab03_c3_clust_alt02 <- coeftest(tab03_c3_alt02, vcov_tab03_c3_alt02)
+tab03_c3_clust_alt02
+
+tab03_c4_alt02 <- lm(dyad1_myoffer ~ dyad1_leader*sideb_leader*rebel,
+                   data = eb_data_tab03_complete)
+vcov_tab03_c4_alt02 <-
+  cluster.vcov(tab03_c4_alt02, eb_data_tab03_complete$psbargaining)
+tab03_c4_clust_alt02 <- coeftest(tab03_c4_alt02, vcov_tab03_c4_alt02)
+tab03_c4_clust_alt02
+
+stargazer(tab03_c1_clust_alt02, tab03_c2_clust_alt02, tab03_c3_clust_alt02,
+          tab03_c4_clust_alt02, add.lines = list(c('Observations',
+          nobs(tab03_c1_alt02), nobs(tab03_c2_alt02), nobs(tab03_c3_alt02),
+          nobs(tab03_c4_alt02)),
+          c('R-squared', round(summary(tab03_c1_alt02)$r.squared, 3),
+          round(summary(tab03_c2_alt02)$r.squared, 3),
+          round(summary(tab03_c3_alt02)$r.squared, 3),
+          round(summary(tab03_c4_alt02)$r.squared, 3))), type = 'text')
+#          covariate.labels = c('Leader', 'Counterpart Leader',
+#          'Leader*Counterpart Leader', 'Dyadic Prior Participation',
+#          'Battle Strength', 'Political PS', 'Multiple PS', 'Mediation',
+#          'No. of Bargaining Sides', 'Foreign Location', 'Autocracy',
+#          'Intensity Level'), type = 'text')
+
+# model predictions
+tab03_c1_alt02_fitted_data <- data.frame(dyad1_leader =
+  c(0, 0, 1, 1, 0, 0, 1, 1), sideb_leader = c(0, 1, 0, 1, 0, 1, 0, 1),
+  rebel = c(1, 1, 1, 1, 0, 0, 0, 0), dyadicexperience = 1,
+  dyad1_relativedeath =
+    with(eb_data_tab03_complete, mean(dyad1_relativedeath, na.rm = TRUE)),
+  pps = 1, mulps = 0, mediation_derouen = 1, noofparticipants = 2,
+  location_foreign = 1, auto = 1, intensitylevel = 1)
+
+tab03_c2_alt02_fitted_data <- data.frame(dyad1_leader =
+  c(0, 0, 1, 1, 0, 0, 1, 1), sideb_leader = c(0, 1, 0, 1, 0, 1, 0, 1),
+  rebel = c(1, 1, 1, 1, 0, 0, 0, 0), dyadicexperience = 1,
+  dyad1_relativedeath =
+    with(eb_data_tab03_complete, mean(dyad1_relativedeath, na.rm = TRUE)),
+  pps = 1, mulps = 0, mediation_derouen = 1, noofparticipants = 2,
+  location_foreign = 1)
+
+tab03_c3_alt02_fitted_data <- data.frame(dyad1_leader =
+  c(0, 0, 1, 1, 0, 0, 1, 1), sideb_leader = c(0, 1, 0, 1, 0, 1, 0, 1),
+  rebel = c(1, 1, 1, 1, 0, 0, 0, 0), dyadicexperience = 1,
+  dyad1_relativedeath =
+    with(eb_data_tab03_complete, mean(dyad1_relativedeath, na.rm = TRUE)))
+
+tab03_c4_alt02_fitted_data <- data.frame(dyad1_leader =
+  c(0, 0, 1, 1, 0, 0, 1, 1), sideb_leader = c(0, 1, 0, 1, 0, 1, 0, 1),
+  rebel = c(1, 1, 1, 1, 0, 0, 0, 0))
+
+tab03_c1_alt02_fitted_vals95 <- predict(object = tab03_c1_alt02,
+                                      newdata = tab03_c1_alt02_fitted_data,
+                                      interval = 'prediction', level = 0.95)
+tab03_c2_alt02_fitted_vals95 <- predict(object = tab03_c2_alt02,
+                                      newdata = tab03_c2_alt02_fitted_data,
+                                      interval = 'prediction', level = 0.95)
+tab03_c3_alt02_fitted_vals95 <- predict(object = tab03_c3_alt02,
+                                      newdata = tab03_c3_alt02_fitted_data,
+                                      interval = 'prediction', level = 0.95)
+tab03_c4_alt02_fitted_vals95 <- predict(object = tab03_c4_alt02,
+                                      newdata = tab03_c4_alt02_fitted_data,
+                                      interval = 'prediction', level = 0.95)
+
+tab03_c1_alt02_fitted_vals90 <- predict(object = tab03_c1_alt02,
+                                      newdata = tab03_c1_alt02_fitted_data,
+                                      interval = 'prediction', level = 0.90)
+tab03_c2_alt02_fitted_vals90 <- predict(object = tab03_c2_alt02,
+                                      newdata = tab03_c2_alt02_fitted_data,
+                                      interval = 'prediction', level = 0.90)
+tab03_c3_alt02_fitted_vals90 <- predict(object = tab03_c3_alt02,
+                                      newdata = tab03_c3_alt02_fitted_data,
+                                      interval = 'prediction', level = 0.90)
+tab03_c4_alt02_fitted_vals90 <- predict(object = tab03_c4_alt02,
+                                      newdata = tab03_c4_alt02_fitted_data,
+                                      interval = 'prediction', level = 0.90)
+pred_offer_c1_alt02_data <-
+  data.frame(cbind(id = c(1, 2, 3, 4),
+                   dyad1_leader = tab03_c1_alt02_fitted_data[, 1],
+                   sideb_leader = tab03_c1_alt02_fitted_data[, 2],
+                   fit = tab03_c1_alt02_fitted_vals95[, 1],
+                   lwr95 = tab03_c1_alt02_fitted_vals95[, 2],
+                   upr95 = tab03_c1_alt02_fitted_vals95[, 3],
+                   lwr90 = tab03_c1_alt02_fitted_vals90[, 2],
+                   upr90 = tab03_c1_alt02_fitted_vals90[, 3])) %>% as_tibble()
+pred_offer_c1_alt02_data
+
+pred_offer_c2_alt02_data <-
+  data.frame(cbind(id = c(1, 2, 3, 4),
+                   dyad1_leader = tab03_c2_alt02_fitted_data[, 1],
+                   sideb_leader = tab03_c2_alt02_fitted_data[, 2],
+                   fit = tab03_c2_alt02_fitted_vals95[, 1],
+                   lwr95 = tab03_c2_alt02_fitted_vals95[, 2],
+                   upr95 = tab03_c2_alt02_fitted_vals95[, 3],
+                   lwr90 = tab03_c2_alt02_fitted_vals90[, 2],
+                   upr90 = tab03_c2_alt02_fitted_vals90[, 3])) %>% as_tibble()
+pred_offer_c2_alt02_data
+
+pred_offer_c3_alt02_data <-
+  data.frame(cbind(id = c(1, 2, 3, 4),
+                   dyad1_leader = tab03_c3_alt02_fitted_data[, 1],
+                   sideb_leader = tab03_c3_alt02_fitted_data[, 2],
+                   fit = tab03_c3_alt02_fitted_vals95[, 1],
+                   lwr95 = tab03_c3_alt02_fitted_vals95[, 2],
+                   upr95 = tab03_c3_alt02_fitted_vals95[, 3],
+                   lwr90 = tab03_c3_alt02_fitted_vals90[, 2],
+                   upr90 = tab03_c3_alt02_fitted_vals90[, 3])) %>% as_tibble()
+pred_offer_c3_alt02_data
+
+pred_offer_c4_alt02_data <-
+  data.frame(cbind(id = c(1, 2, 3, 4),
+                   dyad1_leader = tab03_c4_alt02_fitted_data[, 1],
+                   sideb_leader = tab03_c4_alt02_fitted_data[, 2],
+                   fit = tab03_c4_alt02_fitted_vals95[, 1],
+                   lwr95 = tab03_c4_alt02_fitted_vals95[, 2],
+                   upr95 = tab03_c4_alt02_fitted_vals95[, 3],
+                   lwr90 = tab03_c4_alt02_fitted_vals90[, 2],
+                   upr90 = tab03_c4_alt02_fitted_vals90[, 3])) %>% as_tibble()
+pred_offer_c4_alt02_data
+
+## marginal effects
+var_dyad1_leader_c1_alt02 <- vcov_tab03_c1_alt02['dyad1_leader', 'dyad1_leader']
+var_sideb_leader_c1_alt02 <- vcov_tab03_c1_alt02['sideb_leader', 'sideb_leader']
+var_interaction_c1_alt02 <-
+  vcov_tab03_c1_alt02['dyad1_leader:sideb_leader', 'dyad1_leader:sideb_leader']
+cov_dyad1_interaction_c1_alt02 <-
+  vcov_tab03_c1_alt02['dyad1_leader', 'dyad1_leader:sideb_leader']
+cov_sideb_interaction_c1_alt02 <-
+  vcov_tab03_c1_alt02['sideb_leader', 'dyad1_leader:sideb_leader']
+se_dyad1_leader_total_c1_alt02 <-
+  sqrt(var_dyad1_leader_c1_alt02 + var_interaction_c1_alt02 + 2 *
+       cov_dyad1_interaction_c1_alt02)
+
+var_dyad1_leader_c2_alt02 <- vcov_tab03_c2_alt02['dyad1_leader', 'dyad1_leader']
+var_sideb_leader_c2_alt02 <- vcov_tab03_c2_alt02['sideb_leader', 'sideb_leader']
+var_interaction_c2_alt02 <-
+  vcov_tab03_c2_alt02['dyad1_leader:sideb_leader', 'dyad1_leader:sideb_leader']
+cov_dyad1_interaction_c2_alt02 <-
+  vcov_tab03_c2_alt02['dyad1_leader', 'dyad1_leader:sideb_leader']
+cov_sideb2_interaction_c2_alt <-
+  vcov_tab03_c2_alt['sideb_leader', 'dyad1_leader:sideb_leader']
+se_dyad1_leader_total_c2_alt <-
+  sqrt(var_dyad1_leader_c2_alt + var_interaction_c2_alt + 2 *
+       cov_dyad1_interaction_c2_alt)
+
+var_dyad1_leader_c3_alt <- vcov_tab03_c3_alt['dyad1_leader', 'dyad1_leader']
+var_sideb_leader_c3_alt <- vcov_tab03_c3_alt['sideb_leader', 'sideb_leader']
+var_interaction_c3_alt <-
+  vcov_tab03_c3_alt['dyad1_leader:sideb_leader', 'dyad1_leader:sideb_leader']
+cov_dyad1_interaction_c3_alt <-
+  vcov_tab03_c3_alt['dyad1_leader', 'dyad1_leader:sideb_leader']
+cov_sideb_interaction_c3_alt <-
+  vcov_tab03_c3_alt['sideb_leader', 'dyad1_leader:sideb_leader']
+se_dyad1_leader_total_c3_alt <-
+  sqrt(var_dyad1_leader_c3_alt + var_interaction_c3_alt + 2 *
+       cov_dyad1_interaction_c3_alt)
+
+var_dyad1_leader_c4_alt <- vcov_tab03_c4_alt['dyad1_leader', 'dyad1_leader']
+var_sideb_leader_c4_alt <- vcov_tab03_c4_alt['sideb_leader', 'sideb_leader']
+var_interaction_c4_alt <-
+  vcov_tab03_c4_alt['dyad1_leader:sideb_leader', 'dyad1_leader:sideb_leader']
+cov_dyad1_interaction_c4_alt <-
+  vcov_tab03_c4_alt['dyad1_leader', 'dyad1_leader:sideb_leader']
+cov_sideb_interaction_c4_alt <-
+  vcov_tab03_c4_alt['sideb_leader', 'dyad1_leader:sideb_leader']
+se_dyad1_leader_total_c4_alt <-
+  sqrt(var_dyad1_leader_c4_alt + var_interaction_c4_alt + 2 *
+       cov_dyad1_interaction_c4_alt)
+
+
+me_lead_vs_del_c1_alt <- coef(tab03_c1_clust_alt)['dyad1_leader']
+me_lead_vs_del_95ub_c1_alt <-
+  me_lead_vs_del_c1_alt + 1.96 * sqrt(var_dyad1_leader_c1_alt)
+me_lead_vs_del_95lb_c1_alt <-
+  me_lead_vs_del_c1_alt - 1.96 * sqrt(var_dyad1_leader_c1_alt)
+me_lead_vs_del_90ub_c1_alt <-
+  me_lead_vs_del_c1_alt + 1.645 * sqrt(var_dyad1_leader_c1_alt)
+me_lead_vs_del_90lb_c1_alt <-
+  me_lead_vs_del_c1_alt - 1.645 * sqrt(var_dyad1_leader_c1_alt)
+
+me_lead_vs_lead_c1_alt <- coef(tab03_c1_clust_alt)['dyad1_leader'] +
+  coef(tab03_c1_clust_alt)['sideb_leader']
+me_lead_vs_lead_95ub_c1_alt <-
+  me_lead_vs_lead_c1_alt + 1.96 * se_dyad1_leader_total_c1_alt
+me_lead_vs_lead_95lb_c1_alt <-
+  me_lead_vs_lead_c1_alt - 1.96 * se_dyad1_leader_total_c1_alt
+me_lead_vs_lead_90ub_c1_alt <-
+  me_lead_vs_lead_c1_alt + 1.645 * se_dyad1_leader_total_c1_alt
+me_lead_vs_lead_90lb_c1_alt <-
+  me_lead_vs_lead_c1_alt - 1.645 * se_dyad1_leader_total_c1_alt
+
+me_lead_diff_c1_alt <- coef(tab03_c1_clust_alt)['dyad1_leader:sideb_leader']
+me_lead_diff_95ub_c1_alt <-
+  me_lead_diff_c1_alt + 1.96 * sqrt(var_interaction_c1_alt)
+me_lead_diff_95lb_c1_alt <-
+  me_lead_diff_c1_alt - 1.96 * sqrt(var_interaction_c1_alt)
+me_lead_diff_90ub_c1_alt <-
+  me_lead_diff_c1_alt + 1.645 * sqrt(var_interaction_c1_alt)
+me_lead_diff_90lb_c1_alt <-
+  me_lead_diff_c1_alt - 1.645 * sqrt(var_interaction_c1_alt)
+
+me_lead_vs_del_c2_alt <- coef(tab03_c2_clust_alt)['dyad1_leader']
+me_lead_vs_del_95ub_c2_alt <-
+  me_lead_vs_del_c2_alt + 1.96 * sqrt(var_dyad1_leader_c2_alt)
+me_lead_vs_del_95lb_c2_alt <-
+  me_lead_vs_del_c2_alt - 1.96 * sqrt(var_dyad1_leader_c2_alt)
+me_lead_vs_del_90ub_c2_alt <-
+  me_lead_vs_del_c2_alt + 1.645 * sqrt(var_dyad1_leader_c2_alt)
+me_lead_vs_del_90lb_c2_alt <-
+  me_lead_vs_del_c2_alt - 1.645 * sqrt(var_dyad1_leader_c2_alt)
+
+me_lead_vs_lead_c2_alt <- coef(tab03_c2_clust_alt)['dyad1_leader'] +
+  coef(tab03_c2_clust_alt)['sideb_leader']
+me_lead_vs_lead_95ub_c2_alt <-
+  me_lead_vs_lead_c2_alt + 1.96 * se_dyad1_leader_total_c2_alt
+me_lead_vs_lead_95lb_c2_alt <-
+  me_lead_vs_lead_c2_alt - 1.96 * se_dyad1_leader_total_c2_alt
+me_lead_vs_lead_90ub_c2_alt <-
+  me_lead_vs_lead_c2_alt + 1.645 * se_dyad1_leader_total_c2_alt
+me_lead_vs_lead_90lb_c2_alt <-
+  me_lead_vs_lead_c2_alt - 1.645 * se_dyad1_leader_total_c2_alt
+
+me_lead_diff_c2_alt <- coef(tab03_c2_clust_alt)['dyad1_leader:sideb_leader']
+me_lead_diff_95ub_c2_alt <-
+  me_lead_diff_c2_alt + 1.96 * sqrt(var_interaction_c2_alt)
+me_lead_diff_95lb_c2_alt <-
+  me_lead_diff_c2_alt - 1.96 * sqrt(var_interaction_c2_alt)
+me_lead_diff_90ub_c2_alt <-
+  me_lead_diff_c2_alt + 1.645 * sqrt(var_interaction_c2_alt)
+me_lead_diff_90lb_c2_alt <-
+  me_lead_diff_c2_alt - 1.645 * sqrt(var_interaction_c2_alt)
+
+me_lead_vs_del_c3_alt <- coef(tab03_c3_clust_alt)['dyad1_leader']
+me_lead_vs_del_95ub_c3_alt <-
+  me_lead_vs_del_c3_alt + 1.96 * sqrt(var_dyad1_leader_c3_alt)
+me_lead_vs_del_95lb_c3_alt <-
+  me_lead_vs_del_c3_alt - 1.96 * sqrt(var_dyad1_leader_c3_alt)
+me_lead_vs_del_90ub_c3_alt <-
+  me_lead_vs_del_c3_alt + 1.645 * sqrt(var_dyad1_leader_c3_alt)
+me_lead_vs_del_90lb_c3_alt <-
+  me_lead_vs_del_c3_alt - 1.645 * sqrt(var_dyad1_leader_c3_alt)
+
+me_lead_vs_lead_c3_alt <- coef(tab03_c3_clust_alt)['dyad1_leader'] +
+  coef(tab03_c3_clust_alt)['sideb_leader']
+me_lead_vs_lead_95ub_c3_alt <-
+  me_lead_vs_lead_c3_alt + 1.96 * se_dyad1_leader_total_c3_alt
+me_lead_vs_lead_95lb_c3_alt <-
+  me_lead_vs_lead_c3_alt - 1.96 * se_dyad1_leader_total_c3_alt
+me_lead_vs_lead_90ub_c3_alt <-
+  me_lead_vs_lead_c3_alt + 1.645 * se_dyad1_leader_total_c3_alt
+me_lead_vs_lead_90lb_c3_alt <-
+  me_lead_vs_lead_c3_alt - 1.645 * se_dyad1_leader_total_c3_alt
+
+me_lead_diff_c3_alt <- coef(tab03_c3_clust_alt)['dyad1_leader:sideb_leader']
+me_lead_diff_95ub_c3_alt <-
+  me_lead_diff_c3_alt + 1.96 * sqrt(var_interaction_c3_alt)
+me_lead_diff_95lb_c3_alt <-
+  me_lead_diff_c3_alt - 1.96 * sqrt(var_interaction_c3_alt)
+me_lead_diff_90ub_c3_alt <-
+  me_lead_diff_c3_alt + 1.645 * sqrt(var_interaction_c3_alt)
+me_lead_diff_90lb_c3_alt <-
+  me_lead_diff_c3_alt - 1.645 * sqrt(var_interaction_c3_alt)
+
+me_lead_vs_del_c4_alt <- coef(tab03_c4_clust_alt)['dyad1_leader']
+me_lead_vs_del_95ub_c4_alt <-
+  me_lead_vs_del_c4_alt + 1.96 * sqrt(var_dyad1_leader_c4_alt)
+me_lead_vs_del_95lb_c4_alt <-
+  me_lead_vs_del_c4_alt - 1.96 * sqrt(var_dyad1_leader_c4_alt)
+me_lead_vs_del_90ub_c4_alt <-
+  me_lead_vs_del_c4_alt + 1.645 * sqrt(var_dyad1_leader_c4_alt)
+me_lead_vs_del_90lb_c4_alt <-
+  me_lead_vs_del_c4_alt - 1.645 * sqrt(var_dyad1_leader_c4_alt)
+
+me_lead_vs_lead_c4_alt <- coef(tab03_c4_clust_alt)['dyad1_leader'] +
+  coef(tab03_c4_clust_alt)['sideb_leader']
+me_lead_vs_lead_95ub_c4_alt <-
+  me_lead_vs_lead_c4_alt + 1.96 * se_dyad1_leader_total_c4_alt
+me_lead_vs_lead_95lb_c4_alt <-
+  me_lead_vs_lead_c4_alt - 1.96 * se_dyad1_leader_total_c4_alt
+me_lead_vs_lead_90ub_c4_alt <-
+  me_lead_vs_lead_c4_alt + 1.645 * se_dyad1_leader_total_c4_alt
+me_lead_vs_lead_90lb_c4_alt <-
+  me_lead_vs_lead_c4_alt - 1.645 * se_dyad1_leader_total_c4_alt
+
+me_lead_diff_c4_alt <- coef(tab03_c4_clust_alt)['dyad1_leader:sideb_leader']
+me_lead_diff_95ub_c4_alt <-
+  me_lead_diff_c4_alt + 1.96 * sqrt(var_interaction_c4_alt)
+me_lead_diff_95lb_c4_alt <-
+  me_lead_diff_c4_alt - 1.96 * sqrt(var_interaction_c4_alt)
+me_lead_diff_90ub_c4_alt <-
+  me_lead_diff_c4_alt + 1.645 * sqrt(var_interaction_c4_alt)
+me_lead_diff_90lb_c4_alt <-
+  me_lead_diff_c4_alt - 1.645 * sqrt(var_interaction_c4_alt)
+
+me_leader_data_c1_alt <- data.frame(id = c(3, 2, 1),
+  me = c(me_lead_vs_del_c1_alt, me_lead_vs_lead_c1_alt, me_lead_diff_c1_alt),
+  lb95 = c(me_lead_vs_del_95lb_c1_alt, me_lead_vs_lead_95lb_c1_alt,
+           me_lead_diff_95lb_c1_alt),
+  ub95 = c(me_lead_vs_del_95ub_c1_alt, me_lead_vs_lead_95ub_c1_alt,
+           me_lead_diff_95ub_c1_alt),
+  lb90 = c(me_lead_vs_del_90lb_c1_alt, me_lead_vs_lead_90lb_c1_alt,
+           me_lead_diff_90lb_c1_alt),
+  ub90 = c(me_lead_vs_del_90ub_c1_alt, me_lead_vs_lead_90ub_c1_alt,
+           me_lead_diff_90ub_c1_alt)) %>% as_tibble()
+
+me_leader_data_c2_alt <- data.frame(id = c(3, 2, 1),
+  me = c(me_lead_vs_del_c2_alt, me_lead_vs_lead_c2_alt, me_lead_diff_c2_alt),
+  lb95 = c(me_lead_vs_del_95lb_c2_alt, me_lead_vs_lead_95lb_c2_alt,
+           me_lead_diff_95lb_c2_alt),
+  ub95 = c(me_lead_vs_del_95ub_c2_alt, me_lead_vs_lead_95ub_c2_alt,
+           me_lead_diff_95ub_c2_alt),
+  lb90 = c(me_lead_vs_del_90lb_c2_alt, me_lead_vs_lead_90lb_c2_alt,
+           me_lead_diff_90lb_c2_alt),
+  ub90 = c(me_lead_vs_del_90ub_c2_alt, me_lead_vs_lead_90ub_c2_alt,
+           me_lead_diff_90ub_c2_alt)) %>% as_tibble()
+
+me_leader_data_c3_alt <- data.frame(id = c(3, 2, 1),
+  me = c(me_lead_vs_del_c3_alt, me_lead_vs_lead_c3_alt, me_lead_diff_c3_alt),
+  lb95 = c(me_lead_vs_del_95lb_c3_alt, me_lead_vs_lead_95lb_c3_alt,
+           me_lead_diff_95lb_c3_alt),
+  ub95 = c(me_lead_vs_del_95ub_c3_alt, me_lead_vs_lead_95ub_c3_alt,
+           me_lead_diff_95ub_c3_alt),
+  lb90 = c(me_lead_vs_del_90lb_c3_alt, me_lead_vs_lead_90lb_c3_alt,
+           me_lead_diff_90lb_c3_alt),
+  ub90 = c(me_lead_vs_del_90ub_c3_alt, me_lead_vs_lead_90ub_c3_alt,
+           me_lead_diff_90ub_c3_alt)) %>% as_tibble()
+
+me_leader_data_c4_alt <- data.frame(id = c(3, 2, 1),
+  me = c(me_lead_vs_del_c4_alt, me_lead_vs_lead_c4_alt, me_lead_diff_c4_alt),
+  lb95 = c(me_lead_vs_del_95lb_c4_alt, me_lead_vs_lead_95lb_c4_alt,
+           me_lead_diff_95lb_c4_alt),
+  ub95 = c(me_lead_vs_del_95ub_c4_alt, me_lead_vs_lead_95ub_c4_alt,
+           me_lead_diff_95ub_c4_alt),
+  lb90 = c(me_lead_vs_del_90lb_c4_alt, me_lead_vs_lead_90lb_c4_alt,
+           me_lead_diff_90lb_c4_alt),
+  ub90 = c(me_lead_vs_del_90ub_c4_alt, me_lead_vs_lead_90ub_c4_alt,
+           me_lead_diff_90ub_c4_alt)) %>% as_tibble()
+
+p1_c1 <- ggplot(me_leader_data_c1_alt) +
+  geom_point(aes(x = me, y = id), size = 3) +
+  xlab('Estimated Marginal Effects on Bargaining Offers\nof Leader Status as opposed to Delegate Status') + ylab('') +
+  geom_vline(aes(xintercept = 0), color = 'grey', linetype = 'dashed') +
+  geom_segment(aes(x = lb95, y = id, xend = ub95, yend = id)) +
+  geom_segment(aes(x = lb90, y = id, xend = ub90, yend = id), size = 1.5) +
+  scale_y_continuous(limits = c(1, 3), breaks = c(1, 2, 3),
+    labels = c('Difference', 'Receiver is Leader', 'Receiver is Delegate'))
+
+p1_c2 <- ggplot(me_leader_data_c2_alt) +
+  geom_point(aes(x = me, y = id), size = 3) +
+  xlab('Estimated Marginal Effects on Bargaining Offers\nof Leader Status as opposed to Delegate Status') + ylab('') +
+  geom_vline(aes(xintercept = 0), color = 'grey', linetype = 'dashed') +
+  geom_segment(aes(x = lb95, y = id, xend = ub95, yend = id)) +
+  geom_segment(aes(x = lb90, y = id, xend = ub90, yend = id), size = 1.5) +
+  scale_y_continuous(limits = c(1, 3), breaks = c(1, 2, 3),
+    labels = c('Difference', 'Receiver is Leader', 'Receiver is Delegate'))
+
+p1_c3 <- ggplot(me_leader_data_c3_alt) +
+  geom_point(aes(x = me, y = id), size = 3) +
+  xlab('Estimated Marginal Effects on Bargaining Offers\nof Leader Status as opposed to Delegate Status') + ylab('') +
+  geom_vline(aes(xintercept = 0), color = 'grey', linetype = 'dashed') +
+  geom_segment(aes(x = lb95, y = id, xend = ub95, yend = id)) +
+  geom_segment(aes(x = lb90, y = id, xend = ub90, yend = id), size = 1.5) +
+  scale_y_continuous(limits = c(1, 3), breaks = c(1, 2, 3),
+    labels = c('Difference', 'Receiver is Leader', 'Receiver is Delegate'))
+
+p1_c4 <- ggplot(me_leader_data_c4_alt) +
+  geom_point(aes(x = me, y = id), size = 3) +
+  xlab('Estimated Marginal Effects on Bargaining Offers\nof Leader Status as opposed to Delegate Status') + ylab('') +
+  geom_vline(aes(xintercept = 0), color = 'grey', linetype = 'dashed') +
+  geom_segment(aes(x = lb95, y = id, xend = ub95, yend = id)) +
+  geom_segment(aes(x = lb90, y = id, xend = ub90, yend = id), size = 1.5) +
+  scale_y_continuous(limits = c(1, 3), breaks = c(1, 2, 3),
+    labels = c('Difference', 'Receiver is Leader', 'Receiver is Delegate'))
+
+p1_c1
+p1_c2
+p1_c3
+p1_c4
+
+#```
+
+
+
+
+
+
+
+
+####################################################
+tab03_c1_alt <- lm(dyad1_myoffer ~ dyad1_leader + sideb_leader +
+                   dyad1_relativedeath + pps + mulps +
+                   mediation_derouen + noofparticipants + location_foreign +
+                   auto + intensitylevel, data = eb_data_tab03_complete)
+vcov_tab03_c1_alt <-
+  cluster.vcov(tab03_c1_alt, eb_data_tab03_complete$psbargaining)
+tab03_c1_clust_alt <- coeftest(tab03_c1_alt, vcov_tab03_c1_alt)
+tab03_c1_clust_alt
+
+
+dyadicexperience + 
+####################################################
+
+
+
+## Table 4
+
+
+
+**Table4
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign auto intensitylevel if lowoffer50==1, cluster(psbargaining)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign if lowoffer50==1, cluster(psbargaining)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare if lowoffer50==1, cluster(psbargaining)
+logit reject dyad1_leader dyadicleader if lowoffer50==1, cluster(psbargaining)
+
+**Table5
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign auto intensitylevel if unfairofferA==1, cluster(psbargaining)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign if unfairofferA==1, cluster(psbargaining)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare if unfairofferA==1, cluster(psbargaining)
+logit reject dyad1_leader dyadicleader if unfairofferA==1, cluster(psbargaining)
+
+**Online Appendix B1
+reg dyad1_myoffer dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath pps mulps mediation_derouen noofparticipants location_foreign auto intensitylevel, cluster(dyad)
+reg dyad1_myoffer dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath pps mulps mediation_derouen noofparticipants location_foreign, cluster(dyad)
+reg dyad1_myoffer dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath, cluster(dyad)
+reg dyad1_myoffer dyad1_leader dyadicleader, cluster(dyad)
+
+**Online Appendix B2
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign auto intensitylevel if lowoffer50==1, cluster(dyad)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign if lowoffer50==1, cluster(dyad)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare if lowoffer50==1, cluster(dyad)
+logit reject dyad1_leader dyadicleader if lowoffer50==1, cluster(dyad)
+
+**Online Appendix B3
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign auto intensitylevel if unfairofferA==1, cluster(dyad)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign if unfairofferA==1, cluster(dyad)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare if unfairofferA==1, cluster(dyad)
+logit reject dyad1_leader dyadicleader if unfairofferA==1, cluster(dyad)
+
+**Online Appendix C1
+reg dyad1_myoffer dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath pps mulps mediation_derouen noofparticipants location_foreign auto intensitylevel, cluster(bargaining)
+reg dyad1_myoffer dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath pps mulps mediation_derouen noofparticipants location_foreign, cluster(bargaining)
+reg dyad1_myoffer dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath, cluster(bargaining)
+reg dyad1_myoffer dyad1_leader dyadicleader, cluster(bargaining)
+
+**Online Appendix C2
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign auto intensitylevel if lowoffer50==1, cluster(bargaining)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign if lowoffer50==1, cluster(bargaining)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare if lowoffer50==1, cluster(bargaining)
+logit reject dyad1_leader dyadicleader if lowoffer50==1, cluster(bargaining)
+
+**Online Appendix C3
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign auto intensitylevel if unfairofferA==1, cluster(bargaining)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign if unfairofferA==1, cluster(bargaining)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare if unfairofferA==1, cluster(bargaining)
+logit reject dyad1_leader dyadicleader if unfairofferA==1, cluster(bargaining)
+
+**Online Appendix D1
+reg dyad1_myoffer dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath pps mulps mediation_derouen noofparticipants location_foreign auto intensitylevel, cluster(location)
+reg dyad1_myoffer dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath pps mulps mediation_derouen noofparticipants location_foreign, cluster(location)
+reg dyad1_myoffer dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath, cluster(location)
+reg dyad1_myoffer dyad1_leader dyadicleader, cluster(location)
+
+**Online Appendix D2
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign auto intensitylevel if lowoffer50==1, cluster(location)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign if lowoffer50==1, cluster(location)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare if lowoffer50==1, cluster(location)
+logit reject dyad1_leader dyadicleader if lowoffer50==1, cluster(location)
+
+**Online Appendix D3
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign auto intensitylevel if unfairofferA==1, cluster(location)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare pps mulps mediation_derouen noofparticipants location_foreign if unfairofferA==1, cluster(location)
+logit reject dyad1_leader dyadicleader dyadicexperience dyad1_relativedeath dyad1_myshare if unfairofferA==1, cluster(location)
+logit reject dyad1_leader dyadicleader if unfairofferA==1, cluster(location)
+
+#```{r}
+## multipliers for plotting confidence intervals
+interval1 <- -qnorm((1 - 0.9) / 2)  # 90% multiplier
+interval2 <- -qnorm((1 - 0.95) / 2)  # 95% multiplier
+
+#```
+
+
+
+
+
+
+
+
+
+
+
