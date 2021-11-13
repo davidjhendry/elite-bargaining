@@ -82,6 +82,7 @@ model01 <- glm(overconcession1a ~ dyad1_leader + rebel +
                family = binomial(link = 'logit'), data = eb_data)
 model01_cl <- coeftest(model01, vcov = vcovCL, cluster = ~psbargaining)
 model01_cl
+
 ```
 
 
