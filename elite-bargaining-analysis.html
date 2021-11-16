@@ -261,8 +261,15 @@ div.tocify {
 ## x dplyr::filter() masks stats::filter()
 ## x dplyr::lag()    masks stats::lag()</code></pre>
 <pre class="r"><code>library(readxl)
-
-# set working directory
+library(sandwich)
+library(lmtest)</code></pre>
+<pre><code>## Loading required package: zoo</code></pre>
+<pre><code>## 
+## Attaching package: &#39;zoo&#39;</code></pre>
+<pre><code>## The following objects are masked from &#39;package:base&#39;:
+## 
+##     as.Date, as.Date.numeric</code></pre>
+<pre class="r"><code># set working directory
 #setwd(&#39;...&#39;)
 
 # read in data and make all variable names lower case
@@ -276,27 +283,240 @@ eb_data &lt;-
 ## * `Third-party` -&gt; `Third-party...149`
 ## * Agreement_detail -&gt; Agreement_detail...153
 ## * ...</code></pre>
-<div id="section" class="section level64">
-<p class="heading"></p>
-<p>library(tidyverse) library(readxl) #library(lmtest) #library(multiwayvcov) #library(stargazer)</p>
+<pre class="r"><code># remove spaces and non-standard characters
+names(eb_data) &lt;- gsub(&#39; &#39;, &#39;&#39;, names(eb_data))
+names(eb_data) &lt;- gsub(&#39;\\(&#39;, &#39;&#39;, names(eb_data))
+names(eb_data) &lt;- gsub(&#39;\\)&#39;, &#39;&#39;, names(eb_data))
+names(eb_data) &lt;- gsub(&#39;\\?&#39;, &#39;&#39;, names(eb_data))
+names(eb_data) &lt;- gsub(&#39;,&#39;, &#39;&#39;, names(eb_data))
+names(eb_data) &lt;- gsub(&#39;~&#39;, &#39;&#39;, names(eb_data))
+
+# drop some unnecessary variables that will not be used
+drop_cols &lt;- c(&#39;note_sideb1&#39;, &#39;note_sideb2&#39;, &#39;note_sideb3&#39;, &#39;note_sideb4&#39;,
+               &#39;note_sideb5&#39;, &#39;sideb6&#39;, &#39;ucdp_nego_detail&#39;, &#39;negotiations&#39;,
+               &#39;psharing&#39;, &#39;reader&#39;, &#39;r1bar&#39;, &#39;r1psharing&#39;, &#39;r2bar&#39;,
+               &#39;r2psharing&#39;, &#39;r3bar&#39;, &#39;r3psharing&#39;, &#39;powersharing1stcheck&#39;,
+               &#39;powersharing2ndcheck&#39;, &#39;powersharing3rdcheck&#39;,
+               &#39;intercodermatchpsharing&#39;, &#39;intercodermatchbargaining&#39;, 
+               &#39;reconciled&#39;, &#39;matching&#39;, &#39;conflictid&#39;, &#39;p1death&#39;, &#39;p2death&#39;,
+               &#39;p3death&#39;, &#39;p4death&#39;, &#39;startdate&#39;, &#39;startprec&#39;, &#39;startdate2&#39;,
+               &#39;startprec2&#39;, &#39;epend&#39;, &#39;ependdate&#39;, &#39;ependprec&#39;, &#39;gwnoa&#39;,
+               &#39;gwnoa2nd&#39;, &#39;gwnob&#39;, &#39;gwnob2nd&#39;, &#39;region&#39;, &#39;sideb5&#39;)
+eb_data &lt;- eb_data %&gt;% select(-one_of(drop_cols))
+
+# create variable transformations
+eb_data &lt;- eb_data %&gt;%
+  mutate(overconcession1 = dyad1_otheroffer - dyad1_myoffer,
+         reldeaths90start_adjusted = replace_na(reldeaths90start, .5),
+         mulrebel = case_when(noofparticipants == 2 ~ 0,
+                              noofparticipants &gt; 2 ~ 1),
+         auto = if_else(polityiv &lt; -5, 1, 0),
+         dyad1_relativetroops = as.numeric(dyad1_relativetroops),
+         mediation_derouen = as.numeric(mediation_derouen),
+         setend = as.numeric(setend),
+         location_foreign = as.numeric(location_foreign),
+         accept1 = case_when(dyad1_outcomea == 0 ~ 1,
+                             dyad1_outcomea == 1 ~ 0)) %&gt;%
+  mutate(overconcession1a = case_when(overconcession1 &gt; 0 ~ 0,
+                                      overconcession1 &lt;= 0 ~ 1))</code></pre>
+<pre><code>## Warning in mask$eval_all_mutate(quo): NAs introduced by coercion</code></pre>
+<pre class="r"><code>names(eb_data)</code></pre>
+<pre><code>##   [1] &quot;year&quot;                           &quot;polityiv&quot;                      
+##   [3] &quot;location&quot;                       &quot;sidea&quot;                         
+##   [5] &quot;sidea2nd&quot;                       &quot;sideb&quot;                         
+##   [7] &quot;sideb1&quot;                         &quot;sideb2&quot;                        
+##   [9] &quot;sideb3&quot;                         &quot;sideb4&quot;                        
+##  [11] &quot;mediation_derouen_organization&quot; &quot;mediation_derouen&quot;             
+##  [13] &quot;mediationderouenetal&quot;           &quot;mediation&quot;                     
+##  [15] &quot;dafricacmobined&quot;                &quot;africa&quot;                        
+##  [17] &quot;africacombined&quot;                 &quot;ucdpafrica1993&quot;                
+##  [19] &quot;thomasafrica1989&quot;               &quot;guarantee&quot;                     
+##  [21] &quot;territoryname...46&quot;             &quot;territorialwar&quot;                
+##  [23] &quot;bargaining&quot;                     &quot;psbargaining&quot;                  
+##  [25] &quot;nops&quot;                           &quot;mulps&quot;                         
+##  [27] &quot;pscount&quot;                        &quot;pps&quot;                           
+##  [29] &quot;mps&quot;                            &quot;executive&quot;                     
+##  [31] &quot;typeofps&quot;                       &quot;subtypeofps&quot;                   
+##  [33] &quot;startm&quot;                         &quot;startd&quot;                        
+##  [35] &quot;starty&quot;                         &quot;startnote&quot;                     
+##  [37] &quot;endm&quot;                           &quot;endd&quot;                          
+##  [39] &quot;endy&quot;                           &quot;endnote&quot;                       
+##  [41] &quot;bargainingmonth&quot;                &quot;bargainingmonth_exact&quot;         
+##  [43] &quot;agreement_detail...68&quot;          &quot;setending&quot;                     
+##  [45] &quot;setend&quot;                         &quot;negolocation&quot;                  
+##  [47] &quot;location_foreign&quot;               &quot;noofparticipants&quot;              
+##  [49] &quot;non-participant&quot;                &quot;groupname&quot;                     
+##  [51] &quot;groupstatus&quot;                    &quot;government&quot;                    
+##  [53] &quot;rebel&quot;                          &quot;leader&quot;                        
+##  [55] &quot;samelevel&quot;                      &quot;counterpartleader&quot;             
+##  [57] &quot;delegate&quot;                       &quot;dyad_samelevel&quot;                
+##  [59] &quot;dyad1_leader&quot;                   &quot;dyadicleader&quot;                  
+##  [61] &quot;dyadicnonleader&quot;                &quot;dyadicmixedleader&quot;             
+##  [63] &quot;dyadid&quot;                         &quot;dyad_all&quot;                      
+##  [65] &quot;dyad1_myoffer&quot;                  &quot;dyad1_myshare&quot;                 
+##  [67] &quot;dyad1_otheroffer&quot;               &quot;dyad1_outcomea&quot;                
+##  [69] &quot;dyad1_outcomeb&quot;                 &quot;dyad1_experience&quot;              
+##  [71] &quot;dyadicexperience&quot;               &quot;dyadicnonexperience&quot;           
+##  [73] &quot;dyadicmixedexperience&quot;          &quot;dyad1_experiencea&quot;             
+##  [75] &quot;dyadicexperiencea&quot;              &quot;dyadicnonexperiencea&quot;          
+##  [77] &quot;dyadicmixedexperiencea&quot;         &quot;dyad1_relativedeath&quot;           
+##  [79] &quot;dyad1_relativetroops&quot;           &quot;experience&quot;                    
+##  [81] &quot;experiencea&quot;                    &quot;experiencecount&quot;               
+##  [83] &quot;myoffer&quot;                        &quot;myofferadjusted&quot;               
+##  [85] &quot;myshare&quot;                        &quot;myshareadjusted&quot;               
+##  [87] &quot;otheroffer&quot;                     &quot;otherofferadjusted&quot;            
+##  [89] &quot;outcome&quot;                        &quot;participant1&quot;                  
+##  [91] &quot;participantslevel&quot;              &quot;p1leaderpartcipation&quot;          
+##  [93] &quot;participant2&quot;                   &quot;p2leaderpartcipation&quot;          
+##  [95] &quot;participant3&quot;                   &quot;p3leaderpartcipation&quot;          
+##  [97] &quot;participant4&quot;                   &quot;p4leaderpartcipation&quot;          
+##  [99] &quot;relativetroops&quot;                 &quot;totaltroops&quot;                   
+## [101] &quot;p1troops&quot;                       &quot;p2troops&quot;                      
+## [103] &quot;p3troops&quot;                       &quot;p4troops&quot;                      
+## [105] &quot;p1troop&quot;                        &quot;p2troop&quot;                       
+## [107] &quot;p3troop&quot;                        &quot;p4troop&quot;                       
+## [109] &quot;relativedeath&quot;                  &quot;totaldeath&quot;                    
+## [111] &quot;participant1demand&quot;             &quot;p1share&quot;                       
+## [113] &quot;participant2demand&quot;             &quot;p2share&quot;                       
+## [115] &quot;participant3demand&quot;             &quot;p3share&quot;                       
+## [117] &quot;participant4demand&quot;             &quot;p4share&quot;                       
+## [119] &quot;third-party...148&quot;              &quot;third-party...149&quot;             
+## [121] &quot;dis/agree&quot;                      &quot;agreement&quot;                     
+## [123] &quot;psed&quot;                           &quot;agreement_detail...153&quot;        
+## [125] &quot;sidebid&quot;                        &quot;sideb2nd&quot;                      
+## [127] &quot;incompatibility&quot;                &quot;territoryname...157&quot;           
+## [129] &quot;intensitylevel&quot;                 &quot;cumulativeintensity&quot;           
+## [131] &quot;typeofconflict&quot;                 &quot;gwnoloc&quot;                       
+## [133] &quot;version&quot;                        &quot;sideb_leader&quot;                  
+## [135] &quot;startd_alt&quot;                     &quot;startm_alt&quot;                    
+## [137] &quot;neg_startdate_early&quot;            &quot;endm_alt&quot;                      
+## [139] &quot;endd_alt&quot;                       &quot;neg_enddate_late&quot;              
+## [141] &quot;end30prior&quot;                     &quot;end60prior&quot;                    
+## [143] &quot;end90prior&quot;                     &quot;end120prior&quot;                   
+## [145] &quot;end150prior&quot;                    &quot;end180prior&quot;                   
+## [147] &quot;end1yearprior&quot;                  &quot;start30prior&quot;                  
+## [149] &quot;start60prior&quot;                   &quot;start90prior&quot;                  
+## [151] &quot;start120prior&quot;                  &quot;start150prior&quot;                 
+## [153] &quot;start180prior&quot;                  &quot;start1yearprior&quot;               
+## [155] &quot;within_psbargaining_dyadid&quot;     &quot;end30prior_sidea_deaths&quot;       
+## [157] &quot;end30prior_sideb_deaths&quot;        &quot;end60prior_sidea_deaths&quot;       
+## [159] &quot;end60prior_sideb_deaths&quot;        &quot;end90prior_sidea_deaths&quot;       
+## [161] &quot;end90prior_sideb_deaths&quot;        &quot;end120prior_sidea_deaths&quot;      
+## [163] &quot;end120prior_sideb_deaths&quot;       &quot;end150prior_sidea_deaths&quot;      
+## [165] &quot;end150prior_sideb_deaths&quot;       &quot;end180prior_sidea_deaths&quot;      
+## [167] &quot;end180prior_sideb_deaths&quot;       &quot;end1yearprior_sidea_deaths&quot;    
+## [169] &quot;end1yearprior_sideb_deaths&quot;     &quot;start30prior_sidea_deaths&quot;     
+## [171] &quot;start30prior_sideb_deaths&quot;      &quot;start60prior_sidea_deaths&quot;     
+## [173] &quot;start60prior_sideb_deaths&quot;      &quot;start90prior_sidea_deaths&quot;     
+## [175] &quot;start90prior_sideb_deaths&quot;      &quot;start120prior_sidea_deaths&quot;    
+## [177] &quot;start120prior_sideb_deaths&quot;     &quot;start150prior_sidea_deaths&quot;    
+## [179] &quot;start150prior_sideb_deaths&quot;     &quot;start180prior_sidea_deaths&quot;    
+## [181] &quot;start180prior_sideb_deaths&quot;     &quot;start1yearprior_sidea_deaths&quot;  
+## [183] &quot;start1yearprior_sideb_deaths&quot;   &quot;reldeaths30start&quot;              
+## [185] &quot;reldeaths60start&quot;               &quot;reldeaths90start&quot;              
+## [187] &quot;reldeaths120start&quot;              &quot;reldeaths150start&quot;             
+## [189] &quot;reldeaths180start&quot;              &quot;reldeaths1yearstart&quot;           
+## [191] &quot;reldeaths30end&quot;                 &quot;reldeaths60end&quot;                
+## [193] &quot;reldeaths90end&quot;                 &quot;reldeaths120end&quot;               
+## [195] &quot;reldeaths150end&quot;                &quot;reldeaths180end&quot;               
+## [197] &quot;reldeaths1yearend&quot;              &quot;overconcession1&quot;               
+## [199] &quot;reldeaths90start_adjusted&quot;      &quot;mulrebel&quot;                      
+## [201] &quot;auto&quot;                           &quot;accept1&quot;                       
+## [203] &quot;overconcession1a&quot;</code></pre>
 </div>
-<div id="read-in-data-and-turn-all-variable-names-to-lower-case" class="section level2">
-<h2>read in data and turn all variable names to lower case</h2>
-<p>eb_data &lt;- read_excel(‘Data/PSBargainingDataset_DFF.xlsx’, sheet = ‘CombinedPS_DyadLevel’) %&gt;% rename_all(tolower) names(eb_data) &lt;- gsub(’ ‘,’‘, names(eb_data)) names(eb_data) &lt;- gsub(’\(‘,’‘, names(eb_data)) names(eb_data) &lt;- gsub(’\)‘,’‘, names(eb_data)) names(eb_data) &lt;- gsub(’\?‘,’’, names(eb_data))</p>
+<div id="descriptive-statistics" class="section level1">
+<h1>Descriptive Statistics</h1>
 </div>
-<div id="drop-some-variables-that-will-not-be-used" class="section level2">
-<h2>drop some variables that will not be used</h2>
-<p>drop_cols &lt;- c(‘note_sideb1’, ‘note_sideb2’, ‘note_sideb3’, ‘note_sideb4’, ‘note_sideb5’, ‘sideb6’, ‘ucdp_nego_detail’, ‘negotiations’, ‘psharing’, ‘reader’, ‘r1bar’, ‘r1psharing’, ‘r2bar’, ‘r2psharing’, ‘r3bar’, ‘r3psharing’, ‘powersharing1stcheck’, ‘powersharing2ndcheck’, ‘powersharing3rdcheck’, ‘intercodermatchpsharing’, ‘intercodermatchbargaining’, ‘reconciled’, ‘matching’, ‘conflictid’, ‘p1death’, ‘p2death’, ‘p3death’, ‘p4death’, ‘startdate’, ‘startprec’, ‘startdate2’, ‘startprec2’, ‘epend’, ‘ependdate’, ‘ependprec’, ‘gwnoa’, ‘gwnoa2nd’, ‘gwnob’, ‘gwnob2nd’, ‘region’, ‘sideb5’) eb_data &lt;- eb_data %&gt;% select(-one_of(drop_cols))</p>
-<p>eb_data &lt;- eb_data %&gt;% mutate( dyad1_relativetroops = na_if(dyad1_relativetroops, ‘.’) %&gt;% as.numeric(), reldeaths30end_adjusted = replace_na(reldeaths30end, .5) )</p>
-<p>eb_data &lt;- eb_data %&gt;% mutate( offerstrengthmatch = dyad1_myshare - dyad1_relativetroops, other_reldeaths30end_adjusted = 1 - reldeaths30end_adjusted, mulrebel = case_when(noofparticipants == 2 ~ 0, noofparticipants &gt; 2 ~ 1), auto = if_else(polityiv &lt; -5, 1, 0), offerstrengthmatch30end = dyad1_myoffer - other_reldeaths30end_adjusted )</p>
-<p>eb_data &lt;- eb_data %&gt;% mutate( offerstrengthmatch30end_abs = abs(offerstrengthmatch30end), id = 1:nrow(eb_data), reject1 = case_when(dyad1_outcomea == 0 ~ 0, dyad1_outcomea == 1 ~ 1), reject2 = case_when(dyad1_outcomeb == 0 ~ 0, dyad1_outcomeb == 1 ~ 1), accept1 = case_when(dyad1_outcomea == 0 ~ 1, dyad1_outcomea == 1 ~ 0), accept2 = case_when(dyad1_outcomeb == 0 ~ 1, dyad1_outcomeb == 1 ~ 0), democratic = if_else(polityiv &gt; 0, 1, 0), auto = if_else(polityiv &lt; -5, 1, 0), dyadicsame = case_when(dyadicmixedleader == 0 ~ 1, dyadicmixedleader == 1 ~ 0), mul_rebel = case_when(noofparticipants == 2 ~ 0, noofparticipants == 3 ~ 1, noofparticipants == 4 ~ 1), dyad1_myoffer = dyad1_myoffer / 100, dyad1_myshare = dyad1_myshare / 100, dyad1_otheroffer = dyad1_otheroffer / 100, dyad1_relativetroops = dyad1_relativetroops / 100 )</p>
-<p>eb_data &lt;- eb_data %&gt;% mutate( myoffer_band = case_when((dyad1_myoffer &gt;= 0 &amp; dyad1_myoffer &lt;= 0.1) ~ 1, (dyad1_myoffer &gt; 0.1 &amp; dyad1_myoffer &lt;= 0.2) ~ 2, (dyad1_myoffer &gt; 0.2 &amp; dyad1_myoffer &lt;= 0.3) ~ 3, (dyad1_myoffer &gt; 0.3 &amp; dyad1_myoffer &lt;= 0.4) ~ 4, (dyad1_myoffer &gt; 0.4 &amp; dyad1_myoffer &lt;= 0.5) ~ 5, (dyad1_myoffer &gt; 0.5 &amp; dyad1_myoffer &lt;= 0.6) ~ 6, (dyad1_myoffer &gt; 0.6 &amp; dyad1_myoffer &lt;= 0.7) ~ 7, (dyad1_myoffer &gt; 0.7 &amp; dyad1_myoffer &lt;= 0.8) ~ 8, (dyad1_myoffer &gt; 0.8 &amp; dyad1_myoffer &lt;= 0.9) ~ 9, (dyad1_myoffer &gt; 0.9 &amp; dyad1_myoffer &lt;= 1) ~ 10), myshare_band = case_when((dyad1_myshare &gt;= 0 &amp; dyad1_myshare &lt;= 0.1) ~ 1, (dyad1_myshare &gt; 0.1 &amp; dyad1_myshare &lt;= 0.2) ~ 2, (dyad1_myshare &gt; 0.2 &amp; dyad1_myshare &lt;= 0.3) ~ 3, (dyad1_myshare &gt; 0.3 &amp; dyad1_myshare &lt;= 0.4) ~ 4, (dyad1_myshare &gt; 0.4 &amp; dyad1_myshare &lt;= 0.5) ~ 5, (dyad1_myshare &gt; 0.5 &amp; dyad1_myshare &lt;= 0.6) ~ 6, (dyad1_myshare &gt; 0.6 &amp; dyad1_myshare &lt;= 0.7) ~ 7, (dyad1_myshare &gt; 0.7 &amp; dyad1_myshare &lt;= 0.8) ~ 8, (dyad1_myshare &gt; 0.8 &amp; dyad1_myshare &lt;= 0.9) ~ 9, (dyad1_myshare &gt; 0.9 &amp; dyad1_myshare &lt;= 1) ~ 10), otheroffer_band = case_when((dyad1_otheroffer &gt;= 0 &amp; dyad1_otheroffer &lt;= 0.1) ~ 1, (dyad1_otheroffer &gt; 0.1 &amp; dyad1_otheroffer &lt;= 0.2) ~ 2, (dyad1_otheroffer &gt; 0.2 &amp; dyad1_otheroffer &lt;= 0.3) ~ 3, (dyad1_otheroffer &gt; 0.3 &amp; dyad1_otheroffer &lt;= 0.4) ~ 4, (dyad1_otheroffer &gt; 0.4 &amp; dyad1_otheroffer &lt;= 0.5) ~ 5, (dyad1_otheroffer &gt; 0.5 &amp; dyad1_otheroffer &lt;= 0.6) ~ 6, (dyad1_otheroffer &gt; 0.6 &amp; dyad1_otheroffer &lt;= 0.7) ~ 7, (dyad1_otheroffer &gt; 0.7 &amp; dyad1_otheroffer &lt;= 0.8) ~ 8, (dyad1_otheroffer &gt; 0.8 &amp; dyad1_otheroffer &lt;= 0.9) ~ 9, (dyad1_otheroffer &gt; 0.9 &amp; dyad1_otheroffer &lt;= 1) ~ 10), lowoffer49 = if_else(dyad1_myoffer &lt; 0.5, 1, 0), lowotheroffer49 = if_else(dyad1_otheroffer &lt; 0.5, 1, 0), lowoffer50 = if_else(dyad1_myoffer &lt;= 0.5, 1, 0), lowotheroffer50 = if_else(dyad1_otheroffer &lt;= 0.5, 1, 0), unfairoffer = dyad1_relativetroops - dyad1_otheroffer, unsatisfyingofferA = dyad1_myshare - dyad1_otheroffer, unsatisfyingofferB = dyad1_myoffer - dyad1_otheroffer,</p>
-<p>)</p>
-<p>eb_data &lt;- eb_data %&gt;% mutate( unfairofferA = case_when(unfairoffer &lt; 0 ~ 1, unfairoffer &gt;= 0 ~ 0), unfairofferB = case_when(unfairoffer &lt;= 0 ~ 1, unfairoffer &gt; 0 ~ 0), unsatisfyingofferAa = case_when(unsatisfyingofferA &lt; 0 ~ 1, unsatisfyingofferA &gt;= 0 ~ 0), unsatisfyingofferAb = case_when(unsatisfyingofferA &lt;= 0 ~ 1, unsatisfyingofferA &gt; 0 ~ 0), unsatisfyingofferBa = case_when(unsatisfyingofferB &lt; 0 ~ 1, unsatisfyingofferB &gt;= 0 ~ 0), unsatisfyingofferBb = case_when(unsatisfyingofferB &lt;= 0 ~ 1, unsatisfyingofferB &gt; 0 ~ 1) )</p>
-<p>eb_data &lt;- eb_data %&gt;% mutate(dyad2_leader = NA_real_) %&gt;% mutate(dyad2_leader = case_when(dyadicnonleader == 1 ~ 0)) %&gt;% mutate(dyad2_leader = case_when((dyad1_leader == 1 &amp; dyadicmixedleader == 1) ~ 0)) %&gt;% mutate(dyad2_leader = case_when((dyad1_leader == 0 &amp; dyadicmixedleader == 1) ~ 1)) %&gt;% mutate(dyad2_leader = case_when(dyadicleader == 1 ~ 1))</p>
-<div id="section-1" class="section level56">
-<p class="heading"></p>
+<div id="models" class="section level1">
+<h1>Models</h1>
+<div id="what-explains-a-generous-offer" class="section level2">
+<h2>What Explains a Generous Offer?</h2>
+<pre class="r"><code>model01 &lt;- glm(overconcession1a ~ dyad1_leader + rebel +
+               reldeaths90start_adjusted + mulrebel + incompatibility + mulps +
+               guarantee + mediation_derouen + auto + setend +
+               location_foreign + dyad1_relativetroops,
+               family = binomial(link = &#39;logit&#39;), data = eb_data)
+model01_cl &lt;- coeftest(model01, vcov = vcovCL, cluster = ~psbargaining)
+model01_cl</code></pre>
+<pre><code>## 
+## z test of coefficients:
+## 
+##                            Estimate Std. Error z value Pr(&gt;|z|)   
+## (Intercept)               -0.879769   1.448566 -0.6073 0.543627   
+## dyad1_leader               0.950052   0.476153  1.9953 0.046014 * 
+## rebel                      1.347326   0.692902  1.9445 0.051839 . 
+## reldeaths90start_adjusted  1.515957   0.848261  1.7871 0.073916 . 
+## mulrebel                  -1.075597   0.329614 -3.2632 0.001102 **
+## incompatibility            0.460499   0.410996  1.1204 0.262523   
+## mulps                      0.308278   0.281828  1.0939 0.274020   
+## guarantee                  0.046743   0.324501  0.1440 0.885464   
+## mediation_derouen         -0.611937   0.334703 -1.8283 0.067505 . 
+## auto                       0.231981   0.403022  0.5756 0.564883   
+## setend                     0.161317   0.350663  0.4600 0.645491   
+## location_foreign           0.796685   0.430161  1.8521 0.064017 . 
+## dyad1_relativetroops      -0.031162   0.014969 -2.0818 0.037363 * 
+## ---
+## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1</code></pre>
 </div>
+<div id="what-explains-offer-acceptance-by-leaders" class="section level2">
+<h2>What Explains Offer Acceptance by Leaders?</h2>
+<pre class="r"><code>model02 &lt;- glm(accept1 ~ overconcession1a + rebel +
+               reldeaths90start_adjusted + mulrebel + incompatibility + mulps +
+               guarantee + mediation_derouen + auto + setend +
+               location_foreign + dyad1_relativetroops,
+               family = binomial(link = &#39;logit&#39;), data = eb_data,
+               subset = (dyad1_leader == 1))
+model02_cl &lt;- coeftest(model02, vcov = vcovCL, cluster = ~psbargaining)
+model02_cl</code></pre>
+<pre><code>## 
+## z test of coefficients:
+## 
+##                            Estimate Std. Error z value Pr(&gt;|z|)   
+## (Intercept)               -3.934904   1.800059 -2.1860 0.028817 * 
+## overconcession1a           2.203168   0.728505  3.0242 0.002493 **
+## rebel                     -0.142554   0.406045 -0.3511 0.725529   
+## reldeaths90start_adjusted -0.444542   0.608918 -0.7301 0.465359   
+## mulrebel                  -2.712565   1.144261 -2.3706 0.017760 * 
+## incompatibility           -0.144092   1.368150 -0.1053 0.916123   
+## mulps                      0.708964   1.185875  0.5978 0.549946   
+## guarantee                  0.751763   1.201955  0.6254 0.531676   
+## mediation_derouen         -1.642054   1.050682 -1.5628 0.118089   
+## auto                       1.224392   1.609843  0.7606 0.446916   
+## setend                     3.323890   1.372436  2.4219 0.015440 * 
+## location_foreign           0.442226   0.914279  0.4837 0.628607   
+## dyad1_relativetroops       0.017688   0.011663  1.5166 0.129366   
+## ---
+## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1</code></pre>
+</div>
+<div id="what-explains-offer-acceptance-by-delegates" class="section level2">
+<h2>What Explains Offer Acceptance by Delegates?</h2>
+<pre class="r"><code>model03 &lt;- glm(accept1 ~ overconcession1a + rebel +
+               reldeaths90start_adjusted + mulrebel + incompatibility + mulps +
+               guarantee + mediation_derouen + auto + setend +
+               location_foreign + dyad1_relativetroops,
+               family = binomial(link = &#39;logit&#39;), data = eb_data,
+               subset = (dyad1_leader == 0))
+model03_cl &lt;- coeftest(model03, vcov = vcovCL, cluster = ~psbargaining)
+model03_cl</code></pre>
+<pre><code>## 
+## z test of coefficients:
+## 
+##                              Estimate  Std. Error z value  Pr(&gt;|z|)    
+## (Intercept)                35.0316290   3.4851287 10.0517 &lt; 2.2e-16 ***
+## overconcession1a            0.7831110   0.4255672  1.8402  0.065745 .  
+## rebel                      -0.5583630   0.3145899 -1.7749  0.075916 .  
+## reldeaths90start_adjusted   0.1660660   0.6908241  0.2404  0.810029    
+## mulrebel                   -0.9723536   0.8463857 -1.1488  0.250626    
+## incompatibility           -18.3744950   2.3446209 -7.8369 4.619e-15 ***
+## mulps                       0.5245048   0.9236148  0.5679  0.570115    
+## guarantee                   2.3071509   0.8750438  2.6366  0.008374 ** 
+## mediation_derouen           0.6874472   1.1186006  0.6146  0.538845    
+## auto                       -0.8077957   1.0695333 -0.7553  0.450082    
+## setend                     -1.1640064   0.8562419 -1.3594  0.174008    
+## location_foreign            1.7534197   2.0904394  0.8388  0.401593    
+## dyad1_relativetroops       -0.0081793   0.0048859 -1.6741  0.094118 .  
+## ---
+## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1</code></pre>
 </div>
 </div>
 

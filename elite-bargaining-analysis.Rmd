@@ -61,12 +61,16 @@ eb_data <- eb_data %>%
          mulrebel = case_when(noofparticipants == 2 ~ 0,
                               noofparticipants > 2 ~ 1),
          auto = if_else(polityiv < -5, 1, 0),
-         dyad1_relativetroops = as.numeric(dyad1_relativetroops)) %>%
+         dyad1_relativetroops = as.numeric(dyad1_relativetroops),
+         mediation_derouen = as.numeric(mediation_derouen),
+         setend = as.numeric(setend),
+         location_foreign = as.numeric(location_foreign),
+         accept1 = case_when(dyad1_outcomea == 0 ~ 1,
+                             dyad1_outcomea == 1 ~ 0)) %>%
   mutate(overconcession1a = case_when(overconcession1 > 0 ~ 0,
                                       overconcession1 <= 0 ~ 1))
 names(eb_data)
 ```
-
 
 # Descriptive Statistics
 ```{r}
@@ -74,6 +78,8 @@ names(eb_data)
 ```
 
 # Models
+
+## What Explains a Generous Offer?
 ```{r}
 model01 <- glm(overconcession1a ~ dyad1_leader + rebel +
                reldeaths90start_adjusted + mulrebel + incompatibility + mulps +
@@ -82,129 +88,39 @@ model01 <- glm(overconcession1a ~ dyad1_leader + rebel +
                family = binomial(link = 'logit'), data = eb_data)
 model01_cl <- coeftest(model01, vcov = vcovCL, cluster = ~psbargaining)
 model01_cl
+```
 
+## What Explains Offer Acceptance by Leaders?
+```{r}
+model02 <- glm(accept1 ~ overconcession1a + rebel +
+               reldeaths90start_adjusted + mulrebel + incompatibility + mulps +
+               guarantee + mediation_derouen + auto + setend +
+               location_foreign + dyad1_relativetroops,
+               family = binomial(link = 'logit'), data = eb_data,
+               subset = (dyad1_leader == 1))
+model02_cl <- coeftest(model02, vcov = vcovCL, cluster = ~psbargaining)
+model02_cl
+```
+
+## What Explains Offer Acceptance by Delegates?
+```{r}
+model03 <- glm(accept1 ~ overconcession1a + rebel +
+               reldeaths90start_adjusted + mulrebel + incompatibility + mulps +
+               guarantee + mediation_derouen + auto + setend +
+               location_foreign + dyad1_relativetroops,
+               family = binomial(link = 'logit'), data = eb_data,
+               subset = (dyad1_leader == 0))
+model03_cl <- coeftest(model03, vcov = vcovCL, cluster = ~psbargaining)
+model03_cl
 ```
 
 
 
 
-
-
-
-
-## Over-concession
-gen overconcession1=dyad1_otheroffer-dyad1_myoffer 
-gen overconcession1a=0
-replace overconcession1a=1 if overconcession1<=0
-logit overconcession1a dyad1_leader rebel reldeaths90start_adjusted mulrebel incompatibility mulps guarantee mediation_derouen auto setend location_foreign dyad1_relativetroops, cluster(psbargaining)
-
-Iteration 0:   log pseudolikelihood =  -140.0264  
-Iteration 1:   log pseudolikelihood = -94.295337  
-Iteration 2:   log pseudolikelihood = -93.159872  
-Iteration 3:   log pseudolikelihood = -93.155868  
-Iteration 4:   log pseudolikelihood = -93.155868  
-
-Logistic regression                             Number of obs     =        210
-                                                Wald chi2(12)     =      39.95
-                                                Prob > chi2       =     0.0001
-Log pseudolikelihood = -93.155868               Pseudo R2         =     0.3347
-
-                                       (Std. Err. adjusted for 87 clusters in psbargaining)
--------------------------------------------------------------------------------------------
-                          |               Robust
-         overconcession1a |      Coef.   Std. Err.      z    P>|z|     [95% Conf. Interval]
---------------------------+----------------------------------------------------------------
-             dyad1_leader |   .9500521   .4761527     2.00   0.046       .01681    1.883294
-                    rebel |   1.347326   .6929022     1.94   0.052     -.010737     2.70539
-reldeaths90start_adjusted |   1.515957   .8482607     1.79   0.074    -.1466037    3.178517
-                 mulrebel |  -1.075597    .329614    -3.26   0.001    -1.721628    -.429565
-          incompatibility |   .4604986   .4109955     1.12   0.263    -.3450378    1.266035
-                    mulps |   .3082782    .281828     1.09   0.274    -.2440944    .8606509
-                guarantee |   .0467431    .324501     0.14   0.885    -.5892672    .6827535
-        mediation_derouen |   -.611937   .3347031    -1.83   0.068    -1.267943    .0440689
-                     auto |   .2319812   .4030225     0.58   0.565    -.5579284    1.021891
-                   setend |   .1613171   .3506631     0.46   0.645      -.52597    .8486043
-         location_foreign |   .7966846   .4301611     1.85   0.064    -.0464156    1.639785
-     dyad1_relativetroops |   -3.11622   1.496908    -2.08   0.037    -6.050105   -.1823338
-                    _cons |   -.879769   1.448566    -0.61   0.544    -3.718907    1.959369
--------------------------------------------------------------------------------------------
-
-
-
-
-## for leader
-logit accept1 unsatisfyingoffer1a rebel reldeaths90start_adjusted mulrebel incompatibility mulps guarantee mediation_derouen auto setend location_foreign dyad1_relativetroops if dyad1_leader==1, cluster(psbargaining)
-
-Iteration 0:   log pseudolikelihood = -76.635952  
-Iteration 1:   log pseudolikelihood = -57.736103  
-Iteration 2:   log pseudolikelihood = -57.238576  
-Iteration 3:   log pseudolikelihood = -57.234523  
-Iteration 4:   log pseudolikelihood = -57.234522  
-
-Logistic regression                             Number of obs     =        119
-                                                Wald chi2(12)     =      24.60
-                                                Prob > chi2       =     0.0169
-Log pseudolikelihood = -57.234522               Pseudo R2         =     0.2532
-
-                                       (Std. Err. adjusted for 63 clusters in psbargaining)
--------------------------------------------------------------------------------------------
-                          |               Robust
-                  accept1 |      Coef.   Std. Err.      z    P>|z|     [95% Conf. Interval]
---------------------------+----------------------------------------------------------------
-      unsatisfyingoffer1a |   2.203168   .7285044     3.02   0.002     .7753255     3.63101
-                    rebel |  -.1425538   .4060459    -0.35   0.726    -.9383892    .6532815
-reldeaths90start_adjusted |  -.4445416   .6089181    -0.73   0.465    -1.637999    .7489159
-                 mulrebel |  -2.712565   1.144261    -2.37   0.018    -4.955274   -.4698551
-          incompatibility |  -.1440917   1.368145    -0.11   0.916    -2.825606    2.537423
-                    mulps |   .7089642   1.185871     0.60   0.550      -1.6153    3.033228
-                guarantee |   .7517629   1.201956     0.63   0.532    -1.604027    3.107553
-        mediation_derouen |  -1.642054    1.05068    -1.56   0.118    -3.701348    .4172399
-                     auto |   1.224392    1.60984     0.76   0.447    -1.930837    4.379621
-                   setend |   3.323889   1.372432     2.42   0.015     .6339715    6.013807
-         location_foreign |   .4422257    .914279     0.48   0.629    -1.349728     2.23418
-     dyad1_relativetroops |   1.768818     1.1663     1.52   0.129    -.5170877    4.054723
-                    _cons |  -3.934904   1.800059    -2.19   0.029    -7.462955   -.4068519
--------------------------------------------------------------------------------------------
-
-
-
-
-
-## for delegate
-logit accept1 unsatisfyingoffer1a rebel reldeaths90start_adjusted mulrebel incompatibility mulps guarantee mediation_derouen auto location_foreign dyad1_relativetroops if dyad1_leader==1, cluster(psbargaining)
-
-Iteration 0:   log pseudolikelihood = -80.775575  
-Iteration 1:   log pseudolikelihood = -71.998445  
-Iteration 2:   log pseudolikelihood = -71.838595  
-Iteration 3:   log pseudolikelihood = -71.838307  
-Iteration 4:   log pseudolikelihood = -71.838307  
-
-Logistic regression                             Number of obs     =        123
-                                                Wald chi2(11)     =      16.03
-                                                Prob > chi2       =     0.1399
-Log pseudolikelihood = -71.838307               Pseudo R2         =     0.1106
-
-                                       (Std. Err. adjusted for 65 clusters in psbargaining)
--------------------------------------------------------------------------------------------
-                          |               Robust
-                  accept1 |      Coef.   Std. Err.      z    P>|z|     [95% Conf. Interval]
---------------------------+----------------------------------------------------------------
-      unsatisfyingoffer1a |   1.721039   .5382704     3.20   0.001     .6660482    2.776029
-                    rebel |  -.4594105   .3334751    -1.38   0.168     -1.11301    .1941887
-reldeaths90start_adjusted |  -.1627688   .4710924    -0.35   0.730    -1.086093    .7605553
-                 mulrebel |  -1.173761    .925562    -1.27   0.205    -2.987829    .6403073
-          incompatibility |    .846438   .7617382     1.11   0.266    -.6465414    2.339417
-                    mulps |  -.2922258   .6430052    -0.45   0.649    -1.552493    .9680413
-                guarantee |   .2206805   1.071497     0.21   0.837    -1.879415    2.320776
-        mediation_derouen |   -.487357   .6099779    -0.80   0.424    -1.682892    .7081778
-                     auto |   -.158864   1.121423    -0.14   0.887    -2.356813    2.039085
-         location_foreign |  -.1180829    .808483    -0.15   0.884    -1.702681    1.466515
-     dyad1_relativetroops |   1.199081   .9623469     1.25   0.213    -.6870845    3.085246
-                    _cons |  -2.695283   1.805118    -1.49   0.135     -6.23325    .8426837
--------------------------------------------------------------------------------------------
-
-
-
+Next:
+* only dyads
+* rebels alone
+* governments alone
 
 
 
