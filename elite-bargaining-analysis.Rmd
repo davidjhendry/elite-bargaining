@@ -24,6 +24,8 @@ library(tidyverse)
 library(readxl)
 library(sandwich)
 library(lmtest)
+library(lubridate)
+library(ggplot2)
 
 # set working directory
 #setwd('...')
@@ -65,16 +67,74 @@ eb_data <- eb_data %>%
          mediation_derouen = as.numeric(mediation_derouen),
          setend = as.numeric(setend),
          location_foreign = as.numeric(location_foreign),
+         #noofparticipants = as.numeric(noofparticipants),
          accept1 = case_when(dyad1_outcomea == 0 ~ 1,
                              dyad1_outcomea == 1 ~ 0)) %>%
   mutate(overconcession1a = case_when(overconcession1 > 0 ~ 0,
-                                      overconcession1 <= 0 ~ 1))
+                                      overconcession1 <= 0 ~ 1),
+         setend2 = replace_na(setend, 0))
 names(eb_data)
+
+# generate psbargaining-level datasets for plotting descriptive statistics
+eb_data_psbargaining01 <- eb_data %>%
+  select(location, psbargaining, startm, startd, starty, endm, endd, endy) %>%
+  group_by(psbargaining) %>% slice(1) %>%
+  mutate(startm_early = unlist(strsplit(startm, ', '))[1],
+         startm_late = unlist(strsplit(startm, ', '))[
+           length(unlist(strsplit(startm, ', ')))],
+         startd_early = unlist(strsplit(startd, ' \\(|, |\\)|~'))[1],
+         startd_late = unlist(strsplit(startd, '\\(|, |\\)|~'))[
+           length(unlist(strsplit(startd, '\\(|, |\\)|~')))],
+         startdate_early = make_date(starty, startm_early, startd_early),
+         startdate_late = make_date(starty, startm_late, startd_late),
+         endm_early = unlist(strsplit(endm, '\\(|\\)'))[1],
+         endm_late = unlist(strsplit(endm, '\\(|\\)'))[
+           length(unlist(strsplit(endm, '\\(|\\)')))],
+         endd_early = unlist(strsplit(endd, '\\(|,|, |\\)'))[1],
+         endd_late = unlist(strsplit(endd, '\\(|,|, |\\)'))[
+           length(unlist(strsplit(endd, '\\(|,|, |\\)')))],
+         enddate_early = make_date(endy, endm_early, endd_early),
+         enddate_late = make_date(endy, endm_late, endd_late),
+         indicator = 1
+         )
+eb_data_psbargaining01 %>%
+  select(location, psbargaining, starty, startm_early, startd_early, startdate_early)
+eb_data_psbargaining01 %>%
+  select(location, psbargaining, endy, endm_early, endd_early, enddate_early)
+eb_data_psbargaining01 %>%
+  select(location, psbargaining, startdate_early, enddate_late)
 ```
 
 # Descriptive Statistics
 ```{r}
+# distribution of number of participants in power-sharing bargaining attempts
+x <- ggplot(data = eb_data, aes(x = noofparticipants)) + geom_bar()
+x
 
+# country-level plots
+# 19 countries, time on the x-axis
+# grey transparent vertical bars from start date to end date of each bargaining attempt
+eb_data_psbargaining01_afghanistan <- eb_data_psbargaining01 %>%
+  filter(location == "Afghanistan") %>%
+  group_by(location) %>% select(location, startdate_early, enddate_late) %>%
+  mutate(psbno = 1:n()) %>%
+  gather('startdate_early', 'enddate_late', key = variable, value = number) %>%
+  unite(combined, variable, psbno) %>% spread(combined, number)
+
+x <- ggplot() + geom_blank() +
+  geom_vline(xintercept =
+             eb_data_psbargaining01_afghanistan$startdate_early_1, size = 1, alpha = .4) +
+  geom_rect(aes(xmin = eb_data_psbargaining01_afghanistan$startdate_early_1,
+                xmax = eb_data_psbargaining01_afghanistan$enddate_late_1,
+                ymin = 0, ymax = Inf)) +
+  xlim(min(eb_data_psbargaining01$startdate_early),
+       max(eb_data_psbargaining01$enddate_late)) + #ylim(0, 1) +
+  scale_y_continuous(name = 'Afghanistan', breaks = NULL, limits = c(0, 1)) +
+#  scale_y_discrete(breaks = .5, labels = 'what') +
+#  ylab('Afghanistan') +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), axis.text.y = element_blank())
+x
 ```
 
 # Models
@@ -83,39 +143,45 @@ names(eb_data)
 ```{r}
 model01 <- glm(overconcession1a ~ dyad1_leader + rebel +
                reldeaths90start_adjusted + mulrebel + incompatibility + mulps +
-               guarantee + mediation_derouen + auto + setend +
-               location_foreign + dyad1_relativetroops,
+               guarantee + mediation_derouen + auto + setend2 +
+               location_foreign + dyad1_relativetroops + pps,
                family = binomial(link = 'logit'), data = eb_data)
+model01_cases <- length(model01$residuals)
 model01_cl <- coeftest(model01, vcov = vcovCL, cluster = ~psbargaining)
 model01_cl
+model01_cases
 ```
 
 ## What Explains Offer Acceptance by Leaders?
 ```{r}
 model02 <- glm(accept1 ~ overconcession1a + rebel +
                reldeaths90start_adjusted + mulrebel + incompatibility + mulps +
-               guarantee + mediation_derouen + auto + setend +
-               location_foreign + dyad1_relativetroops,
+               guarantee + mediation_derouen + auto + setend2 +
+               location_foreign + dyad1_relativetroops + pps,
                family = binomial(link = 'logit'), data = eb_data,
                subset = (dyad1_leader == 1))
+model02_cases <- length(model02$residuals)
 model02_cl <- coeftest(model02, vcov = vcovCL, cluster = ~psbargaining)
 model02_cl
+model02_cases
 ```
 
 ## What Explains Offer Acceptance by Delegates?
 ```{r}
 model03 <- glm(accept1 ~ overconcession1a + rebel +
                reldeaths90start_adjusted + mulrebel + incompatibility + mulps +
-               guarantee + mediation_derouen + auto + setend +
-               location_foreign + dyad1_relativetroops,
+               guarantee + mediation_derouen + auto + setend2 +
+               location_foreign + dyad1_relativetroops + pps,
                family = binomial(link = 'logit'), data = eb_data,
                subset = (dyad1_leader == 0))
+model03_cases <- length(model03$residuals)
 model03_cl <- coeftest(model03, vcov = vcovCL, cluster = ~psbargaining)
 model03_cl
+model03_cases
 ```
 
 
-
+pps
 
 Next:
 * only dyads
