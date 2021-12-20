@@ -1,7 +1,7 @@
 ---
 title: "Elite Bargaining Analysis"
 author: "David Hendry and Sunhee Park"
-date: "November 11, 2021"
+date: "December 20, 2021"
 output:
   html_document:
     #df_print: paged
@@ -21,11 +21,13 @@ Read in the data and create variables.
 
 ```{r}
 library(tidyverse)
+library(broom)
 library(readxl)
 library(sandwich)
 library(lmtest)
 library(lubridate)
 library(ggplot2)
+library(ggpubr)
 
 # set working directory
 #setwd('...')
@@ -58,6 +60,7 @@ eb_data <- eb_data %>% select(-one_of(drop_cols))
 
 # create variable transformations
 eb_data <- eb_data %>%
+  mutate(noofparticipants = as.numeric(noofparticipants)) %>%
   mutate(overconcession1 = dyad1_otheroffer - dyad1_myoffer,
          reldeaths90start_adjusted = replace_na(reldeaths90start, .5),
          mulrebel = case_when(noofparticipants == 2 ~ 0,
@@ -72,12 +75,39 @@ eb_data <- eb_data %>%
                              dyad1_outcomea == 1 ~ 0)) %>%
   mutate(overconcession1a = case_when(overconcession1 > 0 ~ 0,
                                       overconcession1 <= 0 ~ 1),
-         setend2 = replace_na(setend, 0))
+         setend2 = replace_na(setend, 0),
+         typeps =
+           case_when(typeofps == 'Political' & subtypeofps == 'Executive' ~
+                       'Political - Executive',
+                     typeofps == 'Military' & subtypeofps == 'Army' ~
+                       'Military - Army',
+                     typeofps == 'Military' & subtypeofps == 'Air Force' ~
+                       'Military - Air Force',
+                     typeofps == 'Military' & subtypeofps == 'Navy' ~
+                       'Military - Navy',
+                     typeofps == 'Military' & subtypeofps == 'Armed Forces' ~
+                       'Military - Armed Forces (General)',
+                     typeofps == 'Political' & subtypeofps == 'Legislative' ~
+                       'Political - Legislative',
+                     typeofps == 'Military' & subtypeofps == 'Police' ~
+                       'Military - Police',
+                     typeofps == 'Political' & subtypeofps == 'Presidency' ~
+                       'Political - Executive',
+                     typeofps == 'Territorial' & subtypeofps == 'Autonomy' ~
+                       'Territorial - Autonomy',
+                     typeofps == 'Political' &
+                       subtypeofps == 'Collective Presidency' ~
+                       'Political - Executive',
+                     typeofps == 'Political' &
+                       subtypeofps == 'Cabinet/Presidency' ~
+                       'Political - Executive'))
 names(eb_data)
+unique(eb_data$typeps)
 
 # generate psbargaining-level datasets for plotting descriptive statistics
-eb_data_psbargaining01 <- eb_data %>%
-  select(location, psbargaining, startm, startd, starty, endm, endd, endy) %>%
+eb_data_psb01 <- eb_data %>%
+  select(location, psbargaining, noofparticipants, startm, startd, starty, endm,
+         endd, endy, typeps) %>%
   group_by(psbargaining) %>% slice(1) %>%
   mutate(startm_early = unlist(strsplit(startm, ', '))[1],
          startm_late = unlist(strsplit(startm, ', '))[
@@ -96,68 +126,403 @@ eb_data_psbargaining01 <- eb_data %>%
          enddate_early = make_date(endy, endm_early, endd_early),
          enddate_late = make_date(endy, endm_late, endd_late),
          indicator = 1
-         )
-eb_data_psbargaining01 %>%
-  select(location, psbargaining, starty, startm_early, startd_early, startdate_early)
-eb_data_psbargaining01 %>%
-  select(location, psbargaining, endy, endm_early, endd_early, enddate_early)
-eb_data_psbargaining01 %>%
-  select(location, psbargaining, startdate_early, enddate_late)
+         ) %>% ungroup
+#eb_data_psbargaining01 %>%
+#  select(location, psbargaining, starty, startm_early, startd_early, startdate_early)
+#eb_data_psbargaining01 %>%
+#  select(location, psbargaining, endy, endm_early, endd_early, enddate_early)
+#eb_data_psbargaining01 %>%
+#  select(location, psbargaining, startdate_early, enddate_late)
 ```
 
 # Descriptive Statistics
 ```{r}
+# country-level plots
+# 19 countries, time on the x-axis
+# grey transparent vertical bars from start date to end date of each bargaining attempt
+eb_data_psb01_afghanistan01 <- eb_data_psb01 %>%
+  filter(location == "Afghanistan") %>%
+  group_by(location) %>%
+  select(location, startdate_early, enddate_late) %>%
+  mutate(psbno = 1:n()) %>%
+  gather('startdate_early', 'enddate_late', key = variable, value = number) %>%
+  unite(combined, variable, psbno) %>% spread(combined, number)
+eb_data_psb01_afghanistan02 <- eb_data_psb01 %>%
+  filter(location == "Afghanistan") %>%
+  group_by(location) %>%
+  select(location, psbargaining, noofparticipants) %>%
+  mutate(psbno = 1:n()) %>%
+  gather('psbargaining', 'noofparticipants', key = variable, value = number) %>%
+  unite(combined, variable, psbno) %>% spread(combined, number)
+eb_data_psb01_afghanistan03 <- eb_data_psb01 %>%
+  filter(location == "Afghanistan") %>%
+  group_by(location) %>%
+  select(location, typeps) %>%
+  mutate(psbno = 1:n()) %>%
+  gather('typeps', key = variable, value = number) %>%
+  unite(combined, variable, psbno) %>% spread(combined, number)
+eb_data_psb01_afghanistan <-
+  full_join(eb_data_psb01_afghanistan01, eb_data_psb01_afghanistan02,
+            by = 'location') %>%
+  full_join(., eb_data_psb01_afghanistan03, by = 'location')
+eb_data_psb01_afghanistan %>%
+  select(location, startdate_early_1, enddate_late_1, noofparticipants_1,
+         typeps_1)
+
+
+
+
+
+
+
+
+# [1] "Afghanistan"          "Angola"               "Bosnia-Herzegovina"  
+# [4] "Cambodia (Kampuchea)" "Colombia"             "Congo"               
+# [7] "DR Congo (Zaire)"     "Ethiopia"             "Guinea-Bissau"       
+#[10] "Iraq"                 "Liberia"              "Mozambique"          
+#[13] "Niger"                "Rwanda"               "Serbia (Yugoslavia)" 
+#[16] "Sierra Leone"         "Somalia"              "Sudan"               
+#[19] "Tajikistan"     
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # distribution of number of participants in power-sharing bargaining attempts
 x <- ggplot(data = eb_data, aes(x = noofparticipants)) + geom_bar()
 x
 
-# country-level plots
-# 19 countries, time on the x-axis
-# grey transparent vertical bars from start date to end date of each bargaining attempt
-eb_data_psbargaining01_afghanistan <- eb_data_psbargaining01 %>%
-  filter(location == "Afghanistan") %>%
-  group_by(location) %>% select(location, startdate_early, enddate_late) %>%
-  mutate(psbno = 1:n()) %>%
-  gather('startdate_early', 'enddate_late', key = variable, value = number) %>%
-  unite(combined, variable, psbno) %>% spread(combined, number)
 
-x <- ggplot() + geom_blank() +
-  geom_vline(xintercept =
-             eb_data_psbargaining01_afghanistan$startdate_early_1, size = 1, alpha = .4) +
-  geom_rect(aes(xmin = eb_data_psbargaining01_afghanistan$startdate_early_1,
-                xmax = eb_data_psbargaining01_afghanistan$enddate_late_1,
-                ymin = 0, ymax = Inf)) +
-  xlim(min(eb_data_psbargaining01$startdate_early),
-       max(eb_data_psbargaining01$enddate_late)) + #ylim(0, 1) +
-  scale_y_continuous(name = 'Afghanistan', breaks = NULL, limits = c(0, 1)) +
-#  scale_y_discrete(breaks = .5, labels = 'what') +
-#  ylab('Afghanistan') +
+
+# line vs. rectangle
+names(eb_data_psb01_afghanistan)
+eb_data_psb01_afghanistan %>%
+  select(psbargaining_1, startdate_early_1, enddate_late_1, typeps_1,
+         noofparticipants_1) #line, single day, bilateral, political - executive
+eb_data_psb01_afghanistan %>%
+  select(psbargaining_2, startdate_early_2, enddate_late_2, typeps_2,
+         noofparticipants_2) #line, single day, bilateral, political - executive
+eb_data_psb01_afghanistan %>%
+  select(psbargaining_3, startdate_early_3, enddate_late_3, typeps_3,
+         noofparticipants_3) #rectangle, multi-day, bilateral, political - executive
+eb_data_psb01_afghanistan %>%
+  select(psbargaining_4, startdate_early_4, enddate_late_4, typeps_4,
+         noofparticipants_4) #line, multi-day, bilateral, political - executive
+eb_data_psb01_afghanistan %>%
+  select(psbargaining_5, startdate_early_5, enddate_late_5, typeps_5,
+         noofparticipants_5) #line, single day, bilateral, political - executive
+eb_data_psb01_afghanistan %>%
+  select(psbargaining_6, startdate_early_6, enddate_late_6, typeps_6,
+         noofparticipants_6) #rectangle, multi-day, bilateral, political - executive
+eb_data_psb01_afghanistan %>%
+  select(psbargaining_7, startdate_early_7, enddate_late_7, typeps_7,
+         noofparticipants_7) #line, single day, bilateral, political - executive
+```
+
+```{r}
+
+
+afghanistan_annotation <- data.frame(
+   x = c(as.Date(eb_data_psb01_afghanistan$startdate_early_1)),
+   y = c(0),
+   label = c(as.character(eb_data_psb01_afghanistan$startdate_early_1))
+)
+
+
+temp_dat <- data.frame(y = seq(-10, 10, 1))
+
+psbargaining_afg <- ggplot() + geom_blank() +
+  geom_vline(xintercept = eb_data_psb01_afghanistan$startdate_early_1,
+             alpha = .3) +
+  geom_vline(xintercept = eb_data_psb01_afghanistan$startdate_early_2,
+             alpha = .3) +
+#  geom_vline(xintercept = eb_data_psb01_afghanistan$startdate_early_3,
+#             alpha = .3) +
+#  geom_vline(xintercept = eb_data_psb01_afghanistan$startdate_early_4,
+#             alpha = .3) +
+  geom_vline(xintercept = eb_data_psb01_afghanistan$startdate_early_5,
+             alpha = .3) +
+#  geom_vline(xintercept = eb_data_psb01_afghanistan$startdate_early_6,
+#             alpha = .3) +
+  geom_vline(xintercept = eb_data_psb01_afghanistan$startdate_early_7,
+             alpha = .3) +
+  geom_rect(aes(xmin = eb_data_psb01_afghanistan$startdate_early_1,
+                xmax = eb_data_psb01_afghanistan$enddate_late_1,
+                ymin = -Inf, ymax = Inf), alpha = .3) +
+  geom_rect(aes(xmin = eb_data_psb01_afghanistan$startdate_early_2,
+                xmax = eb_data_psb01_afghanistan$enddate_late_2,
+                ymin = -Inf, ymax = Inf), alpha = .3) +
+  geom_rect(aes(xmin = eb_data_psb01_afghanistan$startdate_early_3,
+                xmax = eb_data_psb01_afghanistan$enddate_late_3,
+                ymin = -Inf, ymax = Inf), alpha = .3) +
+  geom_rect(aes(xmin = eb_data_psb01_afghanistan$startdate_early_4,
+                xmax = eb_data_psb01_afghanistan$enddate_late_4,
+                ymin = -Inf, ymax = Inf), alpha = .3) +
+  geom_rect(aes(xmin = eb_data_psb01_afghanistan$startdate_early_5,
+                xmax = eb_data_psb01_afghanistan$enddate_late_5,
+                ymin = -Inf, ymax = Inf), alpha = .3) +
+  geom_rect(aes(xmin = eb_data_psb01_afghanistan$startdate_early_6,
+                xmax = eb_data_psb01_afghanistan$enddate_late_6,
+                ymin = -Inf, ymax = Inf), alpha = .3) +
+  geom_rect(aes(xmin = eb_data_psb01_afghanistan$startdate_early_7,
+                xmax = eb_data_psb01_afghanistan$enddate_late_7,
+                ymin = -Inf, ymax = Inf), alpha = .3) +
+  #xlim(min(eb_data_psb01$startdate_early),
+  #     max(eb_data_psb01$enddate_late)) +
+  scale_y_continuous(name = ' \nAfghanistan', breaks = NULL, limits = c(0, 1)) +
+  geom_point(aes(x = as.Date(eb_data_psb01_afghanistan$startdate_early_1),
+                 y = .5), pch = 19, fill = 'black', size = 3) +
+  geom_point(aes(x = as.Date(eb_data_psb01_afghanistan$startdate_early_1),
+                 y = .05), pch = '*', size = 10) +
+#  scale_x_continuous(
+#    breaks = c(as.Date(eb_data_psb01_afghanistan$startdate_early_1),
+#               as.Date(eb_data_psb01_afghanistan$startdate_early_2),
+#               as.numeric(eb_data_psb01_afghanistan$startdate_early_3) +
+#               (as.numeric(eb_data_psb01_afghanistan$enddate_late_3) -
+#               as.numeric(eb_data_psb01_afghanistan$startdate_early_3)) / 2,
+#               as.numeric(eb_data_psb01_afghanistan$startdate_early_4) +
+#               (as.numeric(eb_data_psb01_afghanistan$enddate_late_4) -
+#               as.numeric(eb_data_psb01_afghanistan$startdate_early_4)) / 2),
+#    labels = c(as.character(eb_data_psb01_afghanistan$startdate_early_1),
+#               as.character(eb_data_psb01_afghanistan$startdate_early_2),
+#               paste(as.character(eb_data_psb01_afghanistan$startdate_early_3),
+#                     '-\n',
+#                     as.character(eb_data_psb01_afghanistan$enddate_late_3), '-\n+'),
+#               paste(as.character(eb_data_psb01_afghanistan$startdate_early_4),
+#                     '-\n',
+#                     as.character(eb_data_psb01_afghanistan$enddate_late_4)))) +
+#geom_text(data=afghanistan_annotation, aes(x=x, y=y, label=label),
+#           size=2.5 , angle=45, position = position_jitter(width=1, height=1)) +
+annotate(geom = 'text', x = as.Date(eb_data_psb01_afghanistan$startdate_early_1),
+         y = -10, label = as.character(eb_data_psb01_afghanistan$startdate_early_1),
+         angle = 45) +
+  coord_cartesian(clip = 'off') +
   theme(panel.border = element_blank(), panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(), axis.text.y = element_blank())
-x
+        panel.grid.minor = element_blank(), axis.text.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+psbargaining_afg
+
+#pch: 
+# 19: filled in black circle (Political - Executive)
+# 15: filled in black square (Political - Legislative)
+# 17: filled in black right-side-up triangle (Territorial - Autonomy)
+# 23: filled in black diamond (Military - Armed Forces (General))
+# 25: filled in black upside-down triangle (Military - Army)
+#  4: X (Military - Navy)
+#  7: square with X (Military - Air Force)
+# 13: circle with X (Military - Police)
+
+psb <- ggarrange(psbargaining_afg, psbargaining_afg, psbargaining_afg, psbargaining_afg, psbargaining_afg, psbargaining_afg, psbargaining_afg, psbargaining_afg, psbargaining_afg, psbargaining_afg, ncol = 2, nrow = 5)
+#ggexport(psb, filename = 'Figures/psb.pdf')
+ggsave(file = 'Figures/psb.pdf', width = 297, height = 210, units = 'mm')
+```
+
+
+
+```{r}
+#psbargaining_ang <- ggplot() + geom_blank() +
+##  geom_vline(xintercept = eb_data_psbargaining01_angola$startdate_early_1,
+##             alpha = .4) +
+##  geom_vline(xintercept = eb_data_psbargaining01_angola$startdate_early_2,
+##             alpha = .4) +
+##  geom_vline(xintercept = eb_data_psbargaining01_angola$startdate_early_3,
+##             alpha = .4) +
+##  geom_vline(xintercept = eb_data_psbargaining01_angola$startdate_early_4,
+##             alpha = .4) +
+##  geom_vline(xintercept = eb_data_psbargaining01_angola$startdate_early_5,
+##             alpha = .4) +
+##  geom_vline(xintercept = eb_data_psbargaining01_angola$startdate_early_6,
+##             alpha = .4) +
+##  geom_vline(xintercept = eb_data_psbargaining01_angola$startdate_early_7,
+##             alpha = .4) +
+##  geom_vline(xintercept = eb_data_psbargaining01_angola$startdate_early_8,
+##             alpha = .4) +
+##  geom_vline(xintercept = eb_data_psbargaining01_angola$startdate_early_9,
+##             alpha = .4) +
+#  geom_rect(aes(xmin = eb_data_psbargaining01_angola$startdate_early_1,
+#                xmax = eb_data_psbargaining01_angola$enddate_late_1,
+#                ymin = -Inf, ymax = Inf), alpha = .4) +
+#  geom_rect(aes(xmin = eb_data_psbargaining01_angola$startdate_early_2,
+#                xmax = eb_data_psbargaining01_angola$enddate_late_2,
+#                ymin = -Inf, ymax = Inf), alpha = .4) +
+##  geom_rect(aes(xmin = eb_data_psbargaining01_angola$startdate_early_3,
+##                xmax = eb_data_psbargaining01_angola$enddate_late_3,
+##                ymin = -Inf, ymax = Inf), alpha = .4) +
+##  geom_rect(aes(xmin = eb_data_psbargaining01_angola$startdate_early_4,
+##                xmax = eb_data_psbargaining01_angola$enddate_late_4,
+##                ymin = -Inf, ymax = Inf), alpha = .4) +
+##  geom_rect(aes(xmin = eb_data_psbargaining01_angola$startdate_early_5,
+##                xmax = eb_data_psbargaining01_angola$enddate_late_5,
+##                ymin = -Inf, ymax = Inf), alpha = .4) +
+##  geom_rect(aes(xmin = eb_data_psbargaining01_angola$startdate_early_6,
+##                xmax = eb_data_psbargaining01_angola$enddate_late_6,
+##                ymin = -Inf, ymax = Inf), alpha = .4) +
+##  geom_rect(aes(xmin = eb_data_psbargaining01_angola$startdate_early_7,
+##                xmax = eb_data_psbargaining01_angola$enddate_late_7,
+##                ymin = -Inf, ymax = Inf), alpha = .4) +
+##  geom_rect(aes(xmin = eb_data_psbargaining01_angola$startdate_early_8,
+##                xmax = eb_data_psbargaining01_angola$enddate_late_8,
+##                ymin = -Inf, ymax = Inf), alpha = .4) +
+##  geom_rect(aes(xmin = eb_data_psbargaining01_angola$startdate_early_9,
+##                xmax = eb_data_psbargaining01_angola$enddate_late_9,
+##                ymin = -Inf, ymax = Inf), alpha = .4) +
+#  #xlim(min(eb_data_psbargaining01$startdate_early),
+#  #     max(eb_data_psbargaining01$enddate_late)) +
+#  scale_y_continuous(name = 'Angola', breaks = NULL, limits = c(0, 1)) +
+#  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+#        panel.grid.minor = element_blank(), axis.text.y = element_blank())
+#psbargaining_ang
+
+
+
+################################################################################
+#eb_data %>% filter(location == "Afghanistan") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, startdate_early, enddate_late,
+#         noofparticipants) %>% print(n = Inf)
+#eb_data %>% filter(location == "Angola") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Bosnia-Herzegovina") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Cambodia (Kampuchea)") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Colombia") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Congo") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "DR Congo (Zaire)") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Ethiopia") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Guinea-Bissau") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Iraq") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Liberia") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Mozambique") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Niger") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Rwanda") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Serbia (Yugoslavia)") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Sierra Leone") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Somalia") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Sudan") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
+#eb_data %>% filter(location == "Tajikistan") %>%
+#  group_by(psbargaining) %>% slice(1) %>% ungroup %>%
+#  select(psbargaining, subtypeofps, starty, startm, startd, endy, endm,
+#         endd) %>% print(n = Inf)
 ```
 
 # Models
 
 ## What Explains a Generous Offer?
 ```{r}
-model01 <- glm(overconcession1a ~ dyad1_leader + rebel +
-               reldeaths90start_adjusted + mulrebel + incompatibility + mulps +
-               guarantee + mediation_derouen + auto + setend2 +
-               location_foreign + dyad1_relativetroops + pps,
+model01 <- glm(overconcession1a ~ dyad1_leader + rebel + mulrebel + mulps +
+               pps + mps + guarantee + auto + location_foreign +
+               reldeaths90start_adjusted + dyad1_relativetroops,
                family = binomial(link = 'logit'), data = eb_data)
+model01_cl <- coeftest(model01, vcov = vcovCL, cluster = ~psbargaining)
+model01_ci <- cbind(confint(model01), confint(model01, level = .9))
+model01_cl_ci <- cbind(confint(model01_cl), confint(model01_cl, level = .9))
+
+model01.df <- tidy(model01) %>%
+  mutate(cluster_se = model01_cl[, 2], or = exp(estimate),
+         or_se = or * std.error, or_cluster_se = or * cluster_se,
+         ci95_lb = model01_ci[, 1], ci95_ub = model01_ci[, 2],
+         ci95_lb = model01_ci[, 3], ci95_ub = model01_ci[, 4],
+         ci95_cl_lb = model01_cl_ci[, 1], ci95_cl_ub = model01_cl_ci[, 2],
+         ci95_cl_lb = model01_cl_ci[, 3], ci95_cl_ub = model01_cl_ci[, 4],
+         ci95_or_lb = exp(model01_ci[, 1]), ci95_or_ub = exp(model01_ci[, 2]),
+         ci95_or_lb = exp(model01_ci[, 3]), ci95_or_ub = exp(model01_ci[, 4]),
+         ci95_orcl_lb = exp(model01_cl_ci[, 1]),
+         ci95_orcl_ub = exp(model01_cl_ci[, 2]),
+         ci95_orcl_lb = exp(model01_cl_ci[, 3]),
+         ci95_orcl_ub = exp(model01_cl_ci[, 4]))
+
+
+exp(confint(coeftest(model01, vcov = vcovCL, cluster = ~psbargaining)))
+
 model01_cases <- length(model01$residuals)
 model01_cl <- coeftest(model01, vcov = vcovCL, cluster = ~psbargaining)
 model01_cl
 model01_cases
+
+
+
+model.df <- tidy(model)  # Convert model to dataframe for easy manipulation
+model.df
+#>           term     estimate  std.error statistic      p.value
+#> 1  (Intercept) -13.12749111 1.85079765 -7.092883 1.313465e-12
+#> 2 femalefemale   1.15480121 0.43408932  2.660285 7.807461e-03
+#> 3         math   0.13171175 0.03246105  4.057532 4.959406e-05
+#> 4         read   0.07524236 0.02757725  2.728422 6.363817e-03
+
+model.df %>% 
+  mutate(or = exp(estimate),  # Odds ratio/gradient
+         var.diag = diag(vcov(model)),  # Variance of each coefficient
+         or.se = sqrt(or^2 * var.diag))
 ```
 
 ## What Explains Offer Acceptance by Leaders?
 ```{r}
-model02 <- glm(accept1 ~ overconcession1a + rebel +
-               reldeaths90start_adjusted + mulrebel + incompatibility + mulps +
-               guarantee + mediation_derouen + auto + setend2 +
-               location_foreign + dyad1_relativetroops + pps,
+model02 <- glm(accept1 ~ overconcession1a + rebel + mulrebel + mulps + pps +
+               mps + guarantee + auto + location_foreign +
+               reldeaths90start_adjusted + dyad1_relativetroops,
                family = binomial(link = 'logit'), data = eb_data,
                subset = (dyad1_leader == 1))
 model02_cases <- length(model02$residuals)
@@ -168,10 +533,9 @@ model02_cases
 
 ## What Explains Offer Acceptance by Delegates?
 ```{r}
-model03 <- glm(accept1 ~ overconcession1a + rebel +
-               reldeaths90start_adjusted + mulrebel + incompatibility + mulps +
-               guarantee + mediation_derouen + auto + setend2 +
-               location_foreign + dyad1_relativetroops + pps,
+model03 <- glm(accept1 ~ overconcession1a + rebel + mulrebel + mulps + pps +
+               mps + guarantee + auto + location_foreign +
+               reldeaths90start_adjusted + dyad1_relativetroops,
                family = binomial(link = 'logit'), data = eb_data,
                subset = (dyad1_leader == 0))
 model03_cases <- length(model03$residuals)
@@ -179,6 +543,25 @@ model03_cl <- coeftest(model03, vcov = vcovCL, cluster = ~psbargaining)
 model03_cl
 model03_cases
 ```
+
+
+```{r}
+##Decided to drop incompatibility
+##working with/without mps, with/without mediation_deroun, with polityiv instead of auto, with only one of reldeaths90start_adjusted or dyad1_relativetroops and
+##working with cluster(location)  
+
+
+# coefficient plot 1
+#  - model 1 coefficients and confidence intervals
+#  - model 1 odds ratios and confidence intervals
+
+# coefficient plot 2
+#  - models 2 and 3 coefficients and confidence intervals
+#  - models 2 and 3 odds ratios and confidence intervals
+```
+
+
+
 
 
 pps
